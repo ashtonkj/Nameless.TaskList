@@ -44,6 +44,7 @@ module Adapters =
                 let mediaType = MediaTypeHeaderValue.Parse("application/json")
                 let content = JsonContent.Create(body, mediaType, JsonSerializerOptions(JsonSerializerDefaults.Web))
                 let endpoint = url.TrimEnd('/') + "/api/chat"
+                // Deliberate sync block: IChatClient.Chat is synchronous by design (keeps the Agent loop simple); safe because ASP.NET Core has no synchronization context.
                 let response = httpClient.PostAsync(Uri(endpoint), content).Result
                 response.EnsureSuccessStatusCode() |> ignore
                 let json = response.Content.ReadAsStringAsync().Result

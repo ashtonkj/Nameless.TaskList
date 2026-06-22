@@ -59,7 +59,7 @@ module Pipeline =
             | Error e -> LlmError e
             | Ok matchResult ->
 
-            let topicSlug, topicPath =
+            let _, topicPath =
                 if matchResult.Match && not (System.String.IsNullOrWhiteSpace matchResult.TopicSlug) then
                     matchResult.TopicSlug, Naming.topicPath matchResult.TopicSlug
                 else
@@ -75,6 +75,39 @@ module Pipeline =
                     slug, Naming.topicPath slug
 
             // --- Step: create one task file per task intent ---
+
+            // Strip surrounding code fences / leading prose from a model reply.
+            let stripFences (text: string) =
+                let trimmed = text.Trim()
+                let idx = trimmed.IndexOf("```")
+                if idx >= 0 then
+                    let afterFirst = trimmed.IndexOf('\n', idx)
+                    let lastFence = trimmed.LastIndexOf("```")
+                    if afterFirst > 0 && lastFence > afterFirst then
+                        trimmed.[afterFirst..lastFence - 1].Trim()
+                    else trimmed
+                else trimmed
+
+            // Map urgency string to a priority value.
+            let urgencyToPriority (u: string) =
+                match (if isNull u then "" else u).ToLowerInvariant() with
+                | "critical" -> "critical"
+                | "high" -> "high"
+                | "low" -> "low"
+                | _ -> "medium"
+
+            // Find a collision-free path for a task slug.
+            let freeTaskPath (title: string) =
+                let basePath = Naming.taskPath title
+                if not (deps.Vault.Exists basePath) then basePath
+                else
+                    let baseSlug = Naming.slug title
+                    let rec tryN n =
+                        let candidate = sprintf "tasks/pending/%s-%d.md" baseSlug n
+                        if not (deps.Vault.Exists candidate) then candidate
+                        else tryN (n + 1)
+                    tryN 2
+
             let taskPaths =
                 classification.Entities.Tasks
                 |> Array.toList
@@ -82,14 +115,29 @@ module Pipeline =
                     let user =
                         sprintf "Message intent: %s\nRaw message: %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
                             taskIntent msg.Content (String.concat ", " classification.Contexts) classification.Urgency messagePath
-                    let fileText = Agent.runConversation deps.Chat [] Prompts.taskCreateSystem user
-                    // Parse the returned markdown to recover the title for the filename.
-                    let parsed = MarkdownFile.FromString fileText
-                    let title =
-                        match parsed.FrontMatter with
-                        | Some fm -> (Frontmatter.deserialize<Task> fm).Title
-                        | None -> taskIntent
-                    let path = Naming.taskPath title
+                    let rawText = Agent.runConversation deps.Chat [] Prompts.taskCreateSystem user
+                    // Validate and normalize the model's reply; fall back to a deterministic record if invalid.
+                    let fileText, title =
+                        try
+                            let stripped = stripFences rawText
+                            let parsed = MarkdownFile.FromString stripped
+                            match parsed.FrontMatter with
+                            | Some fm ->
+                                let t = Frontmatter.deserialize<Task> fm
+                                if not (System.String.IsNullOrWhiteSpace t.Title) then
+                                    stripped, t.Title
+                                else raise (System.Exception("empty title"))
+                            | None -> raise (System.Exception("no frontmatter"))
+                        with _ ->
+                            let fallback : Task =
+                                { Type = "Task"; Title = taskIntent
+                                  Status = "pending"; Priority = urgencyToPriority classification.Urgency
+                                  Due = ""; Context = classification.Contexts
+                                  People = classification.PeopleMentioned
+                                  Topic = topicPath; SourceMessage = messagePath }
+                            let fb = MarkdownFile.ToString (Frontmatter.serialize fallback) (sprintf "%s" taskIntent)
+                            fb, taskIntent
+                    let path = freeTaskPath title
                     deps.Vault.Write(path, fileText)
                     path)
 
