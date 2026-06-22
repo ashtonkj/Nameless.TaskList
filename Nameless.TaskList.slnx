@@ -9,5 +9,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Nameless.TaskList.Core.Tests/Nameless.TaskList.Core.Tests.fsproj" />
+    <Project Path="tests/Nameless.TaskList.Tests/Nameless.TaskList.Tests.fsproj" />
   </Folder>
 </Solution>
