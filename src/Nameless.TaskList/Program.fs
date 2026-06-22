@@ -3,6 +3,7 @@ namespace Nameless.TaskList
 
 open System.Net.Http
 open Microsoft.AspNetCore.Builder
+open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
@@ -31,11 +32,14 @@ module Program =
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(
             fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) ->
-                let deps =
-                    { Messages = messages; Vault = vault; Chat = chat
-                      Model = cfg.["Ollama:Model"] }
-                processMessage deps req.Id req.ChatJid
-                |> ProcessMessageHandler.toHttp)) |> ignore
+                try
+                    let deps =
+                        { Messages = messages; Vault = vault; Chat = chat
+                          Model = cfg.["Ollama:Model"] }
+                    processMessage deps req.Id req.ChatJid
+                    |> ProcessMessageHandler.toHttp
+                with ex ->
+                    Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         app.Run()
         0
