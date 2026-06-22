@@ -217,11 +217,38 @@ module Pipeline =
             let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments)
             ignore commitmentPaths
 
+            // --- Step: create note files ---
+            let noteSpec : EntitySpec<Note> =
+                { Prompt = Prompts.noteCreateSystem
+                  BuildUser =
+                    (fun intent ->
+                        sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
+                            intent msg.Content (String.concat ", " classification.Contexts) messagePath)
+                  Interpret =
+                    (fun stripped intent ->
+                        try
+                            let parsed = MarkdownFile.FromString stripped
+                            match parsed.FrontMatter with
+                            | Some fm ->
+                                let n = Frontmatter.deserialize<Note> fm
+                                if not (System.String.IsNullOrWhiteSpace n.Title) then { Record = n; Body = parsed.Content }
+                                else raise (System.Exception("empty title"))
+                            | None -> raise (System.Exception("no frontmatter"))
+                        with _ ->
+                            let fb : Note =
+                                { Type = "Note"; Title = intent; Context = classification.Contexts
+                                  PeopleLinked = classification.PeopleMentioned; Tags = [||]
+                                  Source = messagePath; LastVerified = "" }
+                            { Record = fb; Body = intent })
+                  BasePath = (fun n -> Naming.notePath n.Title) }
+
+            let notePaths = writeEntities deps noteSpec (List.ofArray classification.Entities.Notes)
+
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =
                 { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                   Sender = msg.SenderName; Noise = false; Topic = topicPath
-                  SpawnedTasks = Array.ofList taskPaths; SpawnedEvents = Array.ofList eventPaths; SpawnedNotes = [||]; ProcessedBy = deps.Model }
+                  SpawnedTasks = Array.ofList taskPaths; SpawnedEvents = Array.ofList eventPaths; SpawnedNotes = Array.ofList notePaths; ProcessedBy = deps.Model }
             deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize messageRecord) ("## Raw\n" + msg.Content))
 
             // --- Step: update the topic body (best-effort; logged warning on failure) ---

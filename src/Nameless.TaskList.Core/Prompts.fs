@@ -129,6 +129,17 @@ Rules:
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
+    let noteCreateSystem = """You are creating a Note entry for a personal knowledge base.
+A note captures a fact or piece of reference information worth keeping.
+
+Rules:
+- title: short noun phrase naming the fact
+- context: array — choose from [family, medical, school, finance, professional, personal-kb]
+- tags: array of short lowercase tags (use [] if none)
+- Body: 1–3 sentences capturing the fact, including any specifics (numbers, names, dates).
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 

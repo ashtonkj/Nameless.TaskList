@@ -127,3 +127,18 @@ let ``signal message with a commitment writes a commitment file`` () =
     Pipeline.processMessage d "M1" "jid" |> ignore
     Assert.True(vault.Files.ContainsKey("commitments/q3-school-fees.md"))
     Assert.Contains("unresolved", vault.Files.["commitments/q3-school-fees.md"])
+
+[<Fact>]
+let ``signal message with a note writes a note file and links it`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"allergy fact","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":["Ethan is allergic to penicillin"]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Ethan health"}"""
+    let noteFile = Responses.final "---\ntype: Note\ntitle: Ethan penicillin allergy\ncontext:\n  - medical\ntags:\n  - allergy\n---\nConfirmed 2023."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; noteFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    let notePath = "notes/ethan-penicillin-allergy.md"
+    Assert.True(vault.Files.ContainsKey(notePath))
+    let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+    Assert.Contains(notePath, vault.Files.[msgKey])
