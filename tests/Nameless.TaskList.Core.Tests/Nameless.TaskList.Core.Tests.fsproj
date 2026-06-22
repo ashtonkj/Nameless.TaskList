@@ -12,6 +12,7 @@
         <Compile Include="WireTests.fs" />
         <Compile Include="ToolsTests.fs" />
         <Compile Include="AgentTests.fs" />
+        <Compile Include="ParsingTests.fs" />
         <Compile Include="Sanity.fs" />
     </ItemGroup>
 
