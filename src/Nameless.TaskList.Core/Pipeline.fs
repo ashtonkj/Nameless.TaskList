@@ -39,6 +39,12 @@ module Pipeline =
         | "low" -> "low"
         | _ -> "medium"
 
+    let private knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
+
+    /// True if a person file for this slug exists under any known context directory.
+    let private personExists (vault: IVault) (personSlug: string) =
+        knownContexts |> List.exists (fun ctx -> vault.Exists(Naming.personPath ctx personSlug))
+
     /// Find a collision-free path by inserting -2, -3, ... before the ".md" extension.
     let private freePath (vault: IVault) (basePath: string) =
         if not (vault.Exists basePath) then basePath
@@ -243,6 +249,36 @@ module Pipeline =
                   BasePath = (fun n -> Naming.notePath n.Title) }
 
             let notePaths = writeEntities deps noteSpec (List.ofArray classification.Entities.Notes)
+
+            // --- Step: create Person-stub files for mentioned people not already in the vault ---
+            classification.PeopleMentioned
+            |> Array.toList
+            |> List.iter (fun name ->
+                let personSlug = Naming.slug name
+                if not (System.String.IsNullOrWhiteSpace personSlug) && not (personExists deps.Vault personSlug) then
+                    let user =
+                        sprintf "Person mentioned: %s\nMessage context: %s\nMentioned in: %s"
+                            name (String.concat ", " classification.Contexts) messagePath
+                    let raw = Agent.runConversation deps.Chat [] Prompts.personStubSystem user
+                    let record, body =
+                        try
+                            let parsed = MarkdownFile.FromString (stripFences raw)
+                            match parsed.FrontMatter with
+                            | Some fm ->
+                                let p = Frontmatter.deserialize<Person> fm
+                                if not (System.String.IsNullOrWhiteSpace p.Title) then p, parsed.Content
+                                else raise (System.Exception("empty title"))
+                            | None -> raise (System.Exception("no frontmatter"))
+                        with _ ->
+                            { Type = "Person"; Title = name; Role = ""; Context = [| "family" |]
+                              Channel = ""; Phone = ""; Email = ""; Tags = [||] },
+                            sprintf "%s\n\n⚠ Stub — details to be completed." name
+                    let ctx =
+                        if not (isNull record.Context) && record.Context.Length > 0
+                           && not (System.String.IsNullOrWhiteSpace record.Context.[0])
+                        then record.Context.[0] else "family"
+                    deps.Vault.Write(Naming.personPath ctx personSlug,
+                                     MarkdownFile.ToString (Frontmatter.serialize record) body))
 
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =

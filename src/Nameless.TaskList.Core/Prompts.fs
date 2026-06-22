@@ -140,6 +140,20 @@ Rules:
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
+    let personStubSystem = """You are creating a person stub entry for a personal knowledge base.
+A new person has been mentioned in a message. Create a minimal person file
+based on the available information.
+
+Rules:
+- title: full name if known, role if name not known (e.g. "Ethan's Class Teacher")
+- role: their relationship to the KB owner or their professional role
+- context: infer from the message context — choose from [family, medical, school, finance, professional]
+- All unknown fields should be null or omitted
+- Body: 1 sentence describing who this person is and how they relate to the KB owner.
+  End with: "⚠ Stub — details to be completed."
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 

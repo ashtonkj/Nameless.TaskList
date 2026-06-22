@@ -142,3 +142,29 @@ let ``signal message with a note writes a note file and links it`` () =
     Assert.True(vault.Files.ContainsKey(notePath))
     let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
     Assert.Contains(notePath, vault.Files.[msgKey])
+
+[<Fact>]
+let ``mentioned unknown person gets a stub`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"see doctor","action_required":true,"urgency":"medium","people_mentioned":["Dr Naidoo"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Doctor visit"}"""
+    let personStub = Responses.final "---\ntype: Person\ntitle: Dr Naidoo\nrole: Paediatrician\ncontext:\n  - medical\n---\nEthan's paediatrician. ⚠ Stub — details to be completed."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personStub; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    Assert.True(vault.Files.ContainsKey("people/medical/dr-naidoo.md"))
+
+[<Fact>]
+let ``existing person is not overwritten and no stub LLM call is made`` () =
+    let vault = FakeVault()
+    vault.Seed("people/medical/dr-naidoo.md", "---\ntype: Person\ntitle: Dr Naidoo\n---\nExisting.")
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"see doctor","action_required":true,"urgency":"medium","people_mentioned":["Dr Naidoo"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Doctor visit"}"""
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    // No personStub response scripted: if the pipeline tried to create one, the queue would underflow.
+    let chat = FakeChatClient([ classify; topicMatch; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    Assert.Equal("---\ntype: Person\ntitle: Dr Naidoo\n---\nExisting.", vault.Files.["people/medical/dr-naidoo.md"])
+    Assert.Equal(3, chat.Calls)
