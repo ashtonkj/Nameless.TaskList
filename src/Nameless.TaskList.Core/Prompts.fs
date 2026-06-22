@@ -100,6 +100,60 @@ Rules:
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
+    let eventCreateSystem = """You are creating an Event entry for a personal knowledge base.
+Generate the YAML frontmatter and a brief body for a new event file.
+
+Rules:
+- title: short noun phrase naming the occurrence
+- when: ISO 8601 datetime. The reference date of the source message is provided; resolve
+  relative dates ("next Friday", "the 20th") against it. If only a date is known, use 00:00 and set all_day: true.
+- all_day: true when no specific time was given, else false
+- context: array — choose from [family, medical, school, finance, professional, personal-kb]
+- location: a place name if mentioned, else ""
+- people: array of person slugs relevant to the event (use [] if none)
+- reminder_days_before: integer, default 3
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
+    let commitmentCreateSystem = """You are creating a Commitment entry for a personal knowledge base.
+A commitment is an obligation that exists but does not yet have an assigned task.
+
+Rules:
+- title: short noun phrase naming the obligation
+- status: always "unresolved" for a new commitment
+- priority: infer from context and urgency — default "medium"
+- due: ISO 8601 date if a deadline is known, else ""
+- context: array — choose from [family, medical, school, finance, professional, personal-kb]
+- task_assigned: null
+- escalate_after_days: integer, default 7
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
+    let noteCreateSystem = """You are creating a Note entry for a personal knowledge base.
+A note captures a fact or piece of reference information worth keeping.
+
+Rules:
+- title: short noun phrase naming the fact
+- context: array — choose from [family, medical, school, finance, professional, personal-kb]
+- tags: array of short lowercase tags (use [] if none)
+- Body: 1–3 sentences capturing the fact, including any specifics (numbers, names, dates).
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
+    let personStubSystem = """You are creating a person stub entry for a personal knowledge base.
+A new person has been mentioned in a message. Create a minimal person file
+based on the available information.
+
+Rules:
+- title: full name if known, role if name not known (e.g. "Ethan's Class Teacher")
+- role: their relationship to the KB owner or their professional role
+- context: infer from the message context — choose from [family, medical, school, finance, professional]
+- All unknown fields should be null or omitted
+- Body: 1 sentence describing who this person is and how they relate to the KB owner.
+  End with: "⚠ Stub — details to be completed."
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 

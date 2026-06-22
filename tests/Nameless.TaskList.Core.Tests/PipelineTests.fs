@@ -83,3 +83,102 @@ let ``classification parse failure returns LlmError and writes nothing`` () =
     match Pipeline.processMessage d "M1" "jid" with
     | LlmError _ -> Assert.Empty(vault.Files.Keys)
     | other -> failwithf "expected LlmError, got %A" other
+
+[<Fact>]
+let ``signal message with an event writes a date-pathed event and links it`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["school"],"intent":"sports day","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":[],"events":["Ethan sports day on the 20th"],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Ethan sports day"}"""
+    let eventFile = Responses.final "---\ntype: Event\ntitle: Ethan sports day\nwhen: 2026-06-20T09:00:00+02:00\nall_day: false\ncontext:\n  - school\n---\nAt the school field."
+    let topicBody = Responses.final "## Current understanding\nSports day.\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; eventFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let eventPath = "events/2026/06/ethan-sports-day-2026-06-20.md"
+        Assert.True(vault.Files.ContainsKey(eventPath))
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+        Assert.Contains(eventPath, vault.Files.[msgKey])
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``event with no date falls back to the message date and is flagged`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"party","action_required":true,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":["A party sometime"],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Party"}"""
+    let eventFile = Responses.final "---\ntype: Event\ntitle: A party\nall_day: true\ncontext:\n  - family\n---\nNo date given."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; eventFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    // sampleMessage timestamp is 2026-06-15
+    let key = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("events/2026/06/a-party-2026-06-15"))
+    Assert.Contains("inferred", vault.Files.[key])
+
+[<Fact>]
+let ``signal message with a commitment writes a commitment file`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["finance"],"intent":"fees due","action_required":true,"urgency":"high","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":["Q3 school fees due 1 July"],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"School fees"}"""
+    let commitmentFile = Responses.final "---\ntype: Commitment\ntitle: Q3 school fees\nstatus: unresolved\npriority: high\ndue: 2026-07-01\ncontext:\n  - finance\nescalate_after_days: 7\n---\nPay by EFT."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; commitmentFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    Assert.True(vault.Files.ContainsKey("commitments/q3-school-fees.md"))
+    Assert.Contains("unresolved", vault.Files.["commitments/q3-school-fees.md"])
+
+[<Fact>]
+let ``signal message with a note writes a note file and links it`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"allergy fact","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":["Ethan is allergic to penicillin"]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Ethan health"}"""
+    let noteFile = Responses.final "---\ntype: Note\ntitle: Ethan penicillin allergy\ncontext:\n  - medical\ntags:\n  - allergy\n---\nConfirmed 2023."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; noteFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    let notePath = "notes/ethan-penicillin-allergy.md"
+    Assert.True(vault.Files.ContainsKey(notePath))
+    let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+    Assert.Contains(notePath, vault.Files.[msgKey])
+
+[<Fact>]
+let ``mentioned unknown person gets a stub`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"see doctor","action_required":true,"urgency":"medium","people_mentioned":["Dr Naidoo"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Doctor visit"}"""
+    let personStub = Responses.final "---\ntype: Person\ntitle: Dr Naidoo\nrole: Paediatrician\ncontext:\n  - medical\n---\nEthan's paediatrician. ⚠ Stub — details to be completed."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personStub; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    Assert.True(vault.Files.ContainsKey("people/medical/dr-naidoo.md"))
+
+[<Fact>]
+let ``existing person is not overwritten and no stub LLM call is made`` () =
+    let vault = FakeVault()
+    vault.Seed("people/medical/dr-naidoo.md", "---\ntype: Person\ntitle: Dr Naidoo\n---\nExisting.")
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"see doctor","action_required":true,"urgency":"medium","people_mentioned":["Dr Naidoo"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Doctor visit"}"""
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    // No personStub response scripted: if the pipeline tried to create one, the queue would underflow.
+    let chat = FakeChatClient([ classify; topicMatch; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    Assert.Equal("---\ntype: Person\ntitle: Dr Naidoo\n---\nExisting.", vault.Files.["people/medical/dr-naidoo.md"])
+    Assert.Equal(3, chat.Calls)
+
+[<Fact>]
+let ``person stub with out-of-list context is clamped to family`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"mentioned coach","action_required":false,"urgency":"low","people_mentioned":["Coach Smith"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Coaching"}"""
+    let personStub = Responses.final "---\ntype: Person\ntitle: Coach Smith\nrole: Sports coach\ncontext:\n  - personal-kb\n---\nCoach Smith. ⚠ Stub — details to be completed."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personStub; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    // The stub context "personal-kb" is not in knownContexts, so it should be clamped to "family".
+    Assert.True(vault.Files.ContainsKey("people/family/coach-smith.md"))
+    Assert.False(vault.Files.ContainsKey("people/personal-kb/coach-smith.md"))

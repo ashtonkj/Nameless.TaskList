@@ -29,3 +29,20 @@ let ``taskPath slugs the title under pending`` () =
 [<Fact>]
 let ``topicPath nests under active`` () =
     Assert.Equal("topics/active/ethan-birthday-party-2026.md", Naming.topicPath "ethan-birthday-party-2026")
+
+[<Fact>]
+let ``eventPath is date-pathed by year and month`` () =
+    let w = DateTime(2026, 7, 19, 14, 0, 0, DateTimeKind.Utc)
+    Assert.Equal("events/2026/07/ethans-birthday-party-2026-07-19.md", Naming.eventPath w "Ethan's birthday party")
+
+[<Fact>]
+let ``commitmentPath slugs under commitments`` () =
+    Assert.Equal("commitments/pay-school-fees.md", Naming.commitmentPath "Pay school fees")
+
+[<Fact>]
+let ``notePath slugs under notes`` () =
+    Assert.Equal("notes/ethan-allergies.md", Naming.notePath "Ethan allergies")
+
+[<Fact>]
+let ``personPath nests under people and context`` () =
+    Assert.Equal("people/medical/dr-naidoo.md", Naming.personPath "medical" "dr-naidoo")
