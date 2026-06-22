@@ -115,6 +115,20 @@ Rules:
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
+    let commitmentCreateSystem = """You are creating a Commitment entry for a personal knowledge base.
+A commitment is an obligation that exists but does not yet have an assigned task.
+
+Rules:
+- title: short noun phrase naming the obligation
+- status: always "unresolved" for a new commitment
+- priority: infer from context and urgency — default "medium"
+- due: ISO 8601 date if a deadline is known, else ""
+- context: array — choose from [family, medical, school, finance, professional, personal-kb]
+- task_assigned: null
+- escalate_after_days: integer, default 7
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 

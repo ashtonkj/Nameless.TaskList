@@ -188,6 +188,35 @@ module Pipeline =
 
             let eventPaths = writeEntities deps eventSpec (List.ofArray classification.Entities.Events)
 
+            // --- Step: create commitment files ---
+            let commitmentSpec : EntitySpec<Commitment> =
+                { Prompt = Prompts.commitmentCreateSystem
+                  BuildUser =
+                    (fun intent ->
+                        sprintf "Commitment intent: %s\nRaw message: %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
+                            intent msg.Content (String.concat ", " classification.Contexts) classification.Urgency messagePath)
+                  Interpret =
+                    (fun stripped intent ->
+                        try
+                            let parsed = MarkdownFile.FromString stripped
+                            match parsed.FrontMatter with
+                            | Some fm ->
+                                let c = Frontmatter.deserialize<Commitment> fm
+                                if not (System.String.IsNullOrWhiteSpace c.Title) then { Record = c; Body = parsed.Content }
+                                else raise (System.Exception("empty title"))
+                            | None -> raise (System.Exception("no frontmatter"))
+                        with _ ->
+                            let fb : Commitment =
+                                { Type = "Commitment"; Title = intent; Status = "unresolved"
+                                  Priority = urgencyToPriority classification.Urgency; Due = ""
+                                  Context = classification.Contexts; Topic = topicPath
+                                  TaskAssigned = ""; EscalateAfterDays = 7; SourceMessage = messagePath }
+                            { Record = fb; Body = intent })
+                  BasePath = (fun c -> Naming.commitmentPath c.Title) }
+
+            let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments)
+            ignore commitmentPaths
+
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =
                 { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp

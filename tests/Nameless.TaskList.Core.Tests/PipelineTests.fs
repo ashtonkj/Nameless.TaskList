@@ -114,3 +114,16 @@ let ``event with no date falls back to the message date and is flagged`` () =
     // sampleMessage timestamp is 2026-06-15
     let key = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("events/2026/06/a-party-2026-06-15"))
     Assert.Contains("inferred", vault.Files.[key])
+
+[<Fact>]
+let ``signal message with a commitment writes a commitment file`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["finance"],"intent":"fees due","action_required":true,"urgency":"high","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":["Q3 school fees due 1 July"],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"School fees"}"""
+    let commitmentFile = Responses.final "---\ntype: Commitment\ntitle: Q3 school fees\nstatus: unresolved\npriority: high\ndue: 2026-07-01\ncontext:\n  - finance\nescalate_after_days: 7\n---\nPay by EFT."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; commitmentFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    Assert.True(vault.Files.ContainsKey("commitments/q3-school-fees.md"))
+    Assert.Contains("unresolved", vault.Files.["commitments/q3-school-fees.md"])
