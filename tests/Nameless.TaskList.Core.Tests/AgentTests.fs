@@ -37,3 +37,26 @@ let ``runConversation raises AgentError when it never stops calling tools`` () =
     Assert.Throws<Agent.AgentError>(fun () ->
         Agent.runConversation (client :> IChatClient) tools "sys" "user" |> ignore)
     |> ignore
+
+[<Fact>]
+let ``runConversation handles unknown tool without crashing the loop`` () =
+    let client = FakeChatClient([ Responses.toolCall "nonexistent_tool"; Responses.final "recovered" ])
+    let tools = [ echoTool "get_contexts" "x" ]
+    let result = Agent.runConversation (client :> IChatClient) tools "sys" "user"
+    Assert.Equal("recovered", result)
+    Assert.Equal(2, client.Calls)
+
+[<Fact>]
+let ``runConversation feeds tool output back into the conversation`` () =
+    let invoked = ref false
+    let toolHandler (_args: Dictionary<string, obj>) =
+        invoked := true
+        "tool output"
+    let toolParams = { Type = "object"; Required = [||]; Properties = Dictionary<string, ToolProperty>() }
+    let tool = { Definition = { Function = { Name = "test_tool"; Description = "test"; Parameters = toolParams } }
+                 Handler = toolHandler }
+    let client = FakeChatClient([ Responses.toolCall "test_tool"; Responses.final "done" ])
+    let result = Agent.runConversation (client :> IChatClient) [ tool ] "sys" "user"
+    Assert.Equal("done", result)
+    Assert.Equal(2, client.Calls)
+    Assert.True(!invoked, "Tool handler should have been invoked")
