@@ -4,6 +4,8 @@ open System
 open Markdig
 open Markdig.Extensions.Yaml
 open Markdig.Syntax
+open YamlDotNet.Serialization
+open YamlDotNet.Serialization.NamingConventions
 
 type MarkdownFile =
     {
@@ -16,13 +18,13 @@ type MarkdownFile =
 
         // 2. Parse the document into an Abstract Syntax Tree (AST)
         let document = Markdown.Parse(input, pipeline)
-        
+
         let frontMatterBlock = document.Descendants<YamlFrontMatterBlock>() |> Seq.tryHead
         let frontMatter =
             match frontMatterBlock with
             | None -> None
             | Some (fm) -> Some(fm.Lines.ToString())
-        
+
         let markdownBodyOnly =
             match frontMatterBlock with
             | None -> input
@@ -36,6 +38,10 @@ type MarkdownFile =
             FrontMatter = frontMatter
             Content = markdownBodyOnly
         }
+
+    static member ToString (frontMatter: string) (body: string) =
+        let fm = if frontMatter.EndsWith("\n") then frontMatter else frontMatter + "\n"
+        sprintf "---\n%s---\n\n%s\n" fm (body.TrimEnd())
       
 
 
@@ -72,6 +78,60 @@ type Channel =
         ActiveTopics: string array
     }
     static member Path = "channels"
+
+[<CLIMutable>]
+type Task =
+    { Type: string
+      Title: string
+      Status: string
+      Priority: string
+      Due: string
+      Context: string array
+      People: string array
+      Topic: string
+      SourceMessage: string }
+
+[<CLIMutable>]
+type Topic =
+    { Type: string
+      Title: string
+      Status: string
+      Context: string array
+      Channel: string
+      People: string array
+      FirstSeen: string
+      LastUpdated: string
+      SpawnedTasks: string array
+      MessageRefs: string array }
+
+[<CLIMutable>]
+type Message =
+    { Type: string
+      Channel: string
+      Timestamp: string
+      Sender: string
+      Noise: bool
+      Topic: string
+      SpawnedTasks: string array
+      ProcessedBy: string }
+
+module Frontmatter =
+    let private serializer =
+        SerializerBuilder()
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .Build()
+
+    let private deserializer =
+        DeserializerBuilder()
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .IgnoreUnmatchedProperties()
+            .Build()
+
+    let serialize (value: obj) : string =
+        serializer.Serialize(value)
+
+    let deserialize<'T> (yaml: string) : 'T =
+        deserializer.Deserialize<'T>(yaml)
 
 module Naming =
     open System.Text.RegularExpressions
