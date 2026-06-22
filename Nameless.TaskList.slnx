@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/shared/">
+    <File Path=".gitignore" />
+    <File Path="CLAUDE.md" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Nameless.TaskList.Core/Nameless.TaskList.Core.fsproj" />
+    <Project Path="src/Nameless.TaskList/Nameless.TaskList.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Nameless.TaskList.Core.Tests/Nameless.TaskList.Core.Tests.fsproj" />
+    <Project Path="tests/Nameless.TaskList.Tests/Nameless.TaskList.Tests.fsproj" />
+  </Folder>
+</Solution>

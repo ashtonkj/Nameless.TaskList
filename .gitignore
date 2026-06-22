@@ -56,3 +56,6 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 TestScript.fsx
+src/Nameless.TaskList/appsettings.Development.json
+# JetBrains IDE files
+.idea/

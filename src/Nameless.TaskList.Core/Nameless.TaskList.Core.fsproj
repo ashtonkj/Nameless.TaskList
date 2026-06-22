@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Library.fs"/>
+        <Compile Include="KnowledgeBase.fs" />
+        <Compile Include="Conversation.fs" />
+        <Compile Include="Ports.fs" />
+        <Compile Include="Tools.fs" />
+        <Compile Include="Agent.fs" />
+        <Compile Include="Prompts.fs" />
+        <Compile Include="Pipeline.fs" />
+        <Compile Include="Adapters.fs" />
+        <None Include="TestScript.fsx" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Markdig" Version="1.3.2" />
+      <PackageReference Include="YamlDotNet" Version="18.0.0" />
+      <PackageReference Include="Npgsql" Version="9.0.2" />
+    </ItemGroup>
+
+</Project>
