@@ -107,18 +107,18 @@ module Pipeline =
                     sprintf "Current topic body:\n%s\n\nNew message raw text:\n%s\n\nExtracted intent:\n%s"
                         existing.Content msg.Content classification.Intent
                 let newBody = Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user
-                let updatedFrontmatter =
-                    match existing.FrontMatter with
-                    | Some fm ->
-                        let t = Frontmatter.deserialize<Topic> fm
-                        let merged =
-                            { t with
-                                LastUpdated = isoTimestamp msg.Timestamp
-                                MessageRefs = Array.append t.MessageRefs [| messagePath |]
-                                SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths) }
-                        Frontmatter.serialize merged
-                    | None -> ""
-                deps.Vault.Write(topicPath, MarkdownFile.ToString updatedFrontmatter newBody)
+                match existing.FrontMatter with
+                | Some fm ->
+                    let t = Frontmatter.deserialize<Topic> fm
+                    let merged =
+                        { t with
+                            LastUpdated = isoTimestamp msg.Timestamp
+                            MessageRefs = Array.append t.MessageRefs [| messagePath |]
+                            SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths) }
+                    let updatedFrontmatter = Frontmatter.serialize merged
+                    deps.Vault.Write(topicPath, MarkdownFile.ToString updatedFrontmatter newBody)
+                | None ->
+                    eprintfn "Topic update skipped for %s: no frontmatter found; file left unchanged" topicPath
              with ex ->
                 eprintfn "Topic update failed for %s (message already written): %s" topicPath ex.Message)
 

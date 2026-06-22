@@ -58,6 +58,11 @@ let ``signal message creates topic, task, and message referencing them`` () =
         Assert.True(vault.Files.ContainsKey(topic))
         Assert.True(vault.Files.ContainsKey(List.head tasks))
         Assert.True(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("messages/")))
+        // Assert the message file content references the topic and task paths.
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+        let msgContent = vault.Files.[msgKey]
+        Assert.Contains(topic, msgContent)
+        Assert.Contains(List.head tasks, msgContent)
     | other -> failwithf "expected Processed, got %A" other
 
 [<Fact>]
