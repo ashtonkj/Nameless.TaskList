@@ -102,6 +102,7 @@ type Topic =
       FirstSeen: string
       LastUpdated: string
       SpawnedTasks: string array
+      SpawnedEvents: string array
       MessageRefs: string array }
 
 [<CLIMutable>]
@@ -113,7 +114,56 @@ type Message =
       Noise: bool
       Topic: string
       SpawnedTasks: string array
+      SpawnedEvents: string array
+      SpawnedNotes: string array
       ProcessedBy: string }
+
+[<CLIMutable>]
+type Event =
+    { Type: string
+      Title: string
+      When: string
+      AllDay: bool
+      Context: string array
+      Location: string
+      People: string array
+      Topic: string
+      TasksLinked: string array
+      ReminderDaysBefore: int }
+
+[<CLIMutable>]
+type Commitment =
+    { Type: string
+      Title: string
+      Status: string
+      Priority: string
+      Due: string
+      Context: string array
+      Topic: string
+      TaskAssigned: string
+      EscalateAfterDays: int
+      SourceMessage: string }
+
+[<CLIMutable>]
+type Note =
+    { Type: string
+      Title: string
+      Context: string array
+      PeopleLinked: string array
+      Tags: string array
+      Source: string
+      LastVerified: string }
+
+[<CLIMutable>]
+type Person =
+    { Type: string
+      Title: string
+      Role: string
+      Context: string array
+      Channel: string
+      Phone: string
+      Email: string
+      Tags: string array }
 
 module Frontmatter =
     let private serializer =
@@ -159,4 +209,17 @@ module Naming =
 
     let topicPath (topicSlug: string) : string =
         sprintf "topics/active/%s.md" topicSlug
+
+    let eventPath (whenTs: System.DateTime) (title: string) : string =
+        sprintf "events/%04d/%02d/%s-%04d-%02d-%02d.md"
+            whenTs.Year whenTs.Month (slug title) whenTs.Year whenTs.Month whenTs.Day
+
+    let commitmentPath (title: string) : string =
+        sprintf "commitments/%s.md" (slug title)
+
+    let notePath (title: string) : string =
+        sprintf "notes/%s.md" (slug title)
+
+    let personPath (context: string) (personSlug: string) : string =
+        sprintf "people/%s/%s.md" context personSlug
 

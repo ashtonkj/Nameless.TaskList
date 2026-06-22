@@ -45,7 +45,7 @@ module Pipeline =
                 let record : Message =
                     { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                       Sender = msg.SenderName; Noise = true; Topic = ""
-                      SpawnedTasks = [||]; ProcessedBy = deps.Model }
+                      SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
                 deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) "")
                 ProcessedNoise
             else
@@ -69,7 +69,7 @@ module Pipeline =
                           Context = classification.Contexts; Channel = channelSlug
                           People = classification.PeopleMentioned
                           FirstSeen = isoTimestamp msg.Timestamp; LastUpdated = isoTimestamp msg.Timestamp
-                          SpawnedTasks = [||]; MessageRefs = [||] }
+                          SpawnedTasks = [||]; SpawnedEvents = [||]; MessageRefs = [||] }
                     let body = "## Current understanding\n\n## Open questions\n\n## Resolved\n"
                     deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
                     slug, Naming.topicPath slug
@@ -145,7 +145,7 @@ module Pipeline =
             let messageRecord : Message =
                 { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                   Sender = msg.SenderName; Noise = false; Topic = topicPath
-                  SpawnedTasks = Array.ofList taskPaths; ProcessedBy = deps.Model }
+                  SpawnedTasks = Array.ofList taskPaths; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
             deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize messageRecord) ("## Raw\n" + msg.Content))
 
             // --- Step: update the topic body (best-effort; logged warning on failure) ---
