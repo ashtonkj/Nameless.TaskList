@@ -15,6 +15,9 @@ type FakeVault() =
         member _.ListFiles(relDir) =
             let prefix = relDir.TrimEnd('/') + "/"
             files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
+        member _.ListFilesRecursive(relDir) =
+            let prefix = relDir.TrimEnd('/') + "/"
+            files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
 
 /// Returns scripted responses in order. Records how many times Chat was called.
 type FakeChatClient(scripted: ChatResponse list) =

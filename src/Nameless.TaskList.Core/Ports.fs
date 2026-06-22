@@ -15,6 +15,7 @@ type IVault =
     abstract member Read : relPath: string -> string
     abstract member Write : relPath: string * content: string -> unit
     abstract member ListFiles : relDir: string -> string list
+    abstract member ListFilesRecursive : relDir: string -> string list
 
 /// One round-trip to the chat model. messages and tools are pre-serialized objects.
 type IChatClient =
