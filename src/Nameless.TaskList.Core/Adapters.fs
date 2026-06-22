@@ -88,6 +88,7 @@ module Adapters =
                 use cmd = new NpgsqlCommand(Queries.GetMessageByIdAndChatJid, conn)
                 cmd.Parameters.AddWithValue("Id", id) |> ignore
                 cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
+                // F# resolves ExecuteReader() to the inherited DbDataReader overload, so an explicit downcast to NpgsqlDataReader is required
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
                 if reader.Read() then Some(mapChat reader) else None
             member _.GetRecent(chatJid, before, excludingId) =
@@ -96,5 +97,6 @@ module Adapters =
                 cmd.Parameters.AddWithValue("Id", excludingId) |> ignore
                 cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
                 cmd.Parameters.AddWithValue("Timestamp", before) |> ignore
+                // F# resolves ExecuteReader() to the inherited DbDataReader overload, so an explicit downcast to NpgsqlDataReader is required
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
                 [ while reader.Read() do yield mapChat reader ]
