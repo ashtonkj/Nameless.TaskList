@@ -168,3 +168,17 @@ let ``existing person is not overwritten and no stub LLM call is made`` () =
     Pipeline.processMessage d "M1" "jid" |> ignore
     Assert.Equal("---\ntype: Person\ntitle: Dr Naidoo\n---\nExisting.", vault.Files.["people/medical/dr-naidoo.md"])
     Assert.Equal(3, chat.Calls)
+
+[<Fact>]
+let ``person stub with out-of-list context is clamped to family`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"mentioned coach","action_required":false,"urgency":"low","people_mentioned":["Coach Smith"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Coaching"}"""
+    let personStub = Responses.final "---\ntype: Person\ntitle: Coach Smith\nrole: Sports coach\ncontext:\n  - personal-kb\n---\nCoach Smith. ⚠ Stub — details to be completed."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personStub; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    // The stub context "personal-kb" is not in knownContexts, so it should be clamped to "family".
+    Assert.True(vault.Files.ContainsKey("people/family/coach-smith.md"))
+    Assert.False(vault.Files.ContainsKey("people/personal-kb/coach-smith.md"))

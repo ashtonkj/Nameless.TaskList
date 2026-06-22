@@ -46,6 +46,7 @@ module Pipeline =
         knownContexts |> List.exists (fun ctx -> vault.Exists(Naming.personPath ctx personSlug))
 
     /// Find a collision-free path by inserting -2, -3, ... before the ".md" extension.
+    // Precondition: basePath ends in ".md" (all Naming.*Path helpers satisfy this).
     let private freePath (vault: IVault) (basePath: string) =
         if not (vault.Exists basePath) then basePath
         else
@@ -274,9 +275,11 @@ module Pipeline =
                               Channel = ""; Phone = ""; Email = ""; Tags = [||] },
                             sprintf "%s\n\n⚠ Stub — details to be completed." name
                     let ctx =
-                        if not (isNull record.Context) && record.Context.Length > 0
-                           && not (System.String.IsNullOrWhiteSpace record.Context.[0])
-                        then record.Context.[0] else "family"
+                        let candidate =
+                            if not (isNull record.Context) && record.Context.Length > 0
+                               && not (System.String.IsNullOrWhiteSpace record.Context.[0])
+                            then record.Context.[0] else "family"
+                        if List.contains candidate knownContexts then candidate else "family"
                     deps.Vault.Write(Naming.personPath ctx personSlug,
                                      MarkdownFile.ToString (Frontmatter.serialize record) body))
 
