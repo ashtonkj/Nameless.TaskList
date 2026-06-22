@@ -13,6 +13,7 @@
         <Compile Include="ToolsTests.fs" />
         <Compile Include="AgentTests.fs" />
         <Compile Include="ParsingTests.fs" />
+        <Compile Include="PipelineTests.fs" />
         <Compile Include="Sanity.fs" />
     </ItemGroup>
 

@@ -1,0 +1,80 @@
+module Nameless.TaskList.Core.Tests.PipelineTests
+
+open System
+open Nameless.TaskList.Core
+open Nameless.TaskList.Core.Ports
+open Nameless.TaskList.Core.Pipeline
+open Nameless.TaskList.Core.Tests.Fakes
+open Xunit
+
+// IMessageSource fake returning a single configured message.
+type FakeMessages(msg: ChatMessage option) =
+    interface IMessageSource with
+        member _.GetMessage(_id, _jid) = msg
+        member _.GetRecent(_jid, _before, _ex) = []
+
+let sampleMessage () : ChatMessage =
+    { Id = "M1"; ChatJid = "27800000000@s.whatsapp.net"; ChatName = "Wife"
+      NormalizedChatName = "Wife"; IsGroup = false; SenderId = "27800000000"
+      SenderName = "Wife"; SenderPushName = "Wife"; SenderSavedName = "Wife"
+      SenderBusinessName = null; IsFromMe = false
+      Content = "Can you call Acrobranch tomorrow about the 19th?"
+      MediaType = null; FileName = null; AlbumId = null; AlbumIndex = None
+      Timestamp = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc) }
+
+let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
+    { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model" }
+
+[<Fact>]
+let ``returns NotFound when the message does not exist`` () =
+    let d = deps (FakeMessages(None)) (FakeVault()) (FakeChatClient([]))
+    Assert.Equal(NotFound, Pipeline.processMessage d "M1" "jid")
+
+[<Fact>]
+let ``noise message writes a minimal message file and creates no task`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"ack","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    let result = Pipeline.processMessage d "M1" "jid"
+    Assert.Equal(ProcessedNoise, result)
+    Assert.True(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("messages/")))
+    Assert.False(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("tasks/")))
+
+[<Fact>]
+let ``signal message creates topic, task, and message referencing them`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"call the venue about the party date","action_required":true,"urgency":"high","people_mentioned":["wife"],"entities":{"tasks":["Call Acrobranch to confirm the 19th"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new subject","new_topic_title":"Ethan birthday party 2026"}"""
+    let taskFile = Responses.final "---\ntype: Task\ntitle: Call Acrobranch\nstatus: pending\npriority: high\ncontext:\n  - family\n---\nCall the venue."
+    let topicBody = Responses.final "## Current understanding\nParty being planned.\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    let result = Pipeline.processMessage d "M1" "jid"
+    match result with
+    | Processed(topic, tasks) ->
+        Assert.Equal("topics/active/ethan-birthday-party-2026.md", topic)
+        Assert.Single(tasks) |> ignore
+        Assert.True(vault.Files.ContainsKey(topic))
+        Assert.True(vault.Files.ContainsKey(List.head tasks))
+        Assert.True(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("messages/")))
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``reprocessing an already-written message is a no-op`` () =
+    let vault = FakeVault()
+    // Pre-seed the message file at the path the pipeline will compute.
+    vault.Seed("messages/wife/2026-06-15T14-17-45.md", "---\ntype: Message\n---\n")
+    let chat = FakeChatClient([])  // must not be called
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Assert.Equal(Skipped, Pipeline.processMessage d "M1" "jid")
+    Assert.Equal(0, chat.Calls)
+
+[<Fact>]
+let ``classification parse failure returns LlmError and writes nothing`` () =
+    let vault = FakeVault()
+    let chat = FakeChatClient([ Responses.final "I cannot help with that" ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | LlmError _ -> Assert.Empty(vault.Files.Keys)
+    | other -> failwithf "expected LlmError, got %A" other
