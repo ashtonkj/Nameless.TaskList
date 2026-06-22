@@ -20,6 +20,55 @@ module Pipeline =
 
     let private isoTimestamp (ts: System.DateTime) = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
 
+    /// Strip surrounding code fences / leading prose from a model reply.
+    let private stripFences (text: string) =
+        let trimmed = (if isNull text then "" else text).Trim()
+        let idx = trimmed.IndexOf("```")
+        if idx >= 0 then
+            let afterFirst = trimmed.IndexOf('\n', idx)
+            let lastFence = trimmed.LastIndexOf("```")
+            if afterFirst > 0 && lastFence > afterFirst then trimmed.[afterFirst..lastFence - 1].Trim()
+            else trimmed
+        else trimmed
+
+    /// Map an urgency string to a priority value.
+    let private urgencyToPriority (u: string) =
+        match (if isNull u then "" else u).ToLowerInvariant() with
+        | "critical" -> "critical"
+        | "high" -> "high"
+        | "low" -> "low"
+        | _ -> "medium"
+
+    /// Find a collision-free path by inserting -2, -3, ... before the ".md" extension.
+    let private freePath (vault: IVault) (basePath: string) =
+        if not (vault.Exists basePath) then basePath
+        else
+            let stem = if basePath.EndsWith(".md") then basePath.[.. basePath.Length - 4] else basePath
+            let rec tryN n =
+                let candidate = sprintf "%s-%d.md" stem n
+                if not (vault.Exists candidate) then candidate else tryN (n + 1)
+            tryN 2
+
+    type private EntityOutcome<'T> = { Record: 'T; Body: string }
+
+    type private EntitySpec<'T> =
+        { Prompt: string
+          BuildUser: string -> string
+          Interpret: string -> string -> EntityOutcome<'T>   // stripped reply, intent -> outcome
+          BasePath: 'T -> string }
+
+    /// Run a per-type generation prompt for each intent: validate (or fall back),
+    /// canonicalize, collision-guard the path, write, and return the written paths.
+    let private writeEntities (deps: PipelineDeps) (spec: EntitySpec<'T>) (intents: string list) : string list =
+        intents
+        |> List.map (fun intent ->
+            let raw = Agent.runConversation deps.Chat [] spec.Prompt (spec.BuildUser intent)
+            let outcome = spec.Interpret (stripFences raw) intent
+            let text = MarkdownFile.ToString (Frontmatter.serialize outcome.Record) outcome.Body
+            let path = freePath deps.Vault (spec.BasePath outcome.Record)
+            deps.Vault.Write(path, text)
+            path)
+
     let processMessage (deps: PipelineDeps) (id: string) (chatJid: string) : PipelineResult =
         match deps.Messages.GetMessage(id, chatJid) with
         | None -> NotFound
@@ -74,72 +123,33 @@ module Pipeline =
                     deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
                     slug, Naming.topicPath slug
 
-            // --- Step: create one task file per task intent ---
-
-            // Strip surrounding code fences / leading prose from a model reply.
-            let stripFences (text: string) =
-                let trimmed = text.Trim()
-                let idx = trimmed.IndexOf("```")
-                if idx >= 0 then
-                    let afterFirst = trimmed.IndexOf('\n', idx)
-                    let lastFence = trimmed.LastIndexOf("```")
-                    if afterFirst > 0 && lastFence > afterFirst then
-                        trimmed.[afterFirst..lastFence - 1].Trim()
-                    else trimmed
-                else trimmed
-
-            // Map urgency string to a priority value.
-            let urgencyToPriority (u: string) =
-                match (if isNull u then "" else u).ToLowerInvariant() with
-                | "critical" -> "critical"
-                | "high" -> "high"
-                | "low" -> "low"
-                | _ -> "medium"
-
-            // Find a collision-free path for a task slug.
-            let freeTaskPath (title: string) =
-                let basePath = Naming.taskPath title
-                if not (deps.Vault.Exists basePath) then basePath
-                else
-                    let baseSlug = Naming.slug title
-                    let rec tryN n =
-                        let candidate = sprintf "tasks/pending/%s-%d.md" baseSlug n
-                        if not (deps.Vault.Exists candidate) then candidate
-                        else tryN (n + 1)
-                    tryN 2
-
-            let taskPaths =
-                classification.Entities.Tasks
-                |> Array.toList
-                |> List.map (fun taskIntent ->
-                    let user =
+            // --- Step: create task files via the shared entity writer ---
+            let taskSpec : EntitySpec<Task> =
+                { Prompt = Prompts.taskCreateSystem
+                  BuildUser =
+                    (fun intent ->
                         sprintf "Message intent: %s\nRaw message: %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
-                            taskIntent msg.Content (String.concat ", " classification.Contexts) classification.Urgency messagePath
-                    let rawText = Agent.runConversation deps.Chat [] Prompts.taskCreateSystem user
-                    // Validate and normalize the model's reply; fall back to a deterministic record if invalid.
-                    let fileText, title =
+                            intent msg.Content (String.concat ", " classification.Contexts) classification.Urgency messagePath)
+                  Interpret =
+                    (fun stripped intent ->
                         try
-                            let stripped = stripFences rawText
                             let parsed = MarkdownFile.FromString stripped
                             match parsed.FrontMatter with
                             | Some fm ->
                                 let t = Frontmatter.deserialize<Task> fm
-                                if not (System.String.IsNullOrWhiteSpace t.Title) then
-                                    stripped, t.Title
+                                if not (System.String.IsNullOrWhiteSpace t.Title) then { Record = t; Body = parsed.Content }
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
-                            let fallback : Task =
-                                { Type = "Task"; Title = taskIntent
-                                  Status = "pending"; Priority = urgencyToPriority classification.Urgency
-                                  Due = ""; Context = classification.Contexts
-                                  People = classification.PeopleMentioned
+                            let fb : Task =
+                                { Type = "Task"; Title = intent; Status = "pending"
+                                  Priority = urgencyToPriority classification.Urgency; Due = ""
+                                  Context = classification.Contexts; People = classification.PeopleMentioned
                                   Topic = topicPath; SourceMessage = messagePath }
-                            let fb = MarkdownFile.ToString (Frontmatter.serialize fallback) (sprintf "%s" taskIntent)
-                            fb, taskIntent
-                    let path = freeTaskPath title
-                    deps.Vault.Write(path, fileText)
-                    path)
+                            { Record = fb; Body = intent })
+                  BasePath = (fun t -> Naming.taskPath t.Title) }
+
+            let taskPaths = writeEntities deps taskSpec (List.ofArray classification.Entities.Tasks)
 
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =
