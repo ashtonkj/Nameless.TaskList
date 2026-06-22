@@ -151,11 +151,48 @@ module Pipeline =
 
             let taskPaths = writeEntities deps taskSpec (List.ofArray classification.Entities.Tasks)
 
+            // --- Step: create event files (date-pathed; undated events fall back to the message date) ---
+            let parseWhen (s: string) (fallback: System.DateTime) =
+                match System.DateTime.TryParse(s) with
+                | true, dt -> dt
+                | _ -> fallback
+
+            let eventSpec : EntitySpec<Event> =
+                { Prompt = Prompts.eventCreateSystem
+                  BuildUser =
+                    (fun intent ->
+                        sprintf "Event intent: %s\nRaw message: %s\nMessage reference date: %s\nContext(s): %s\nSource message file: %s"
+                            intent msg.Content (isoTimestamp msg.Timestamp) (String.concat ", " classification.Contexts) messagePath)
+                  Interpret =
+                    (fun stripped intent ->
+                        let flag = "\n\n_Date inferred from message; please confirm._"
+                        let ensureDated (e: Event) (body: string) =
+                            match System.DateTime.TryParse(e.When) with
+                            | true, _ -> { Record = e; Body = body }
+                            | _ -> { Record = { e with When = isoTimestamp msg.Timestamp }; Body = body + flag }
+                        try
+                            let parsed = MarkdownFile.FromString stripped
+                            match parsed.FrontMatter with
+                            | Some fm ->
+                                let e = Frontmatter.deserialize<Event> fm
+                                if not (System.String.IsNullOrWhiteSpace e.Title) then ensureDated e parsed.Content
+                                else raise (System.Exception("empty title"))
+                            | None -> raise (System.Exception("no frontmatter"))
+                        with _ ->
+                            let fb : Event =
+                                { Type = "Event"; Title = intent; When = isoTimestamp msg.Timestamp; AllDay = true
+                                  Context = classification.Contexts; Location = ""; People = classification.PeopleMentioned
+                                  Topic = topicPath; TasksLinked = Array.ofList taskPaths; ReminderDaysBefore = 3 }
+                            { Record = fb; Body = intent + flag })
+                  BasePath = (fun e -> Naming.eventPath (parseWhen e.When msg.Timestamp) e.Title) }
+
+            let eventPaths = writeEntities deps eventSpec (List.ofArray classification.Entities.Events)
+
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =
                 { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                   Sender = msg.SenderName; Noise = false; Topic = topicPath
-                  SpawnedTasks = Array.ofList taskPaths; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
+                  SpawnedTasks = Array.ofList taskPaths; SpawnedEvents = Array.ofList eventPaths; SpawnedNotes = [||]; ProcessedBy = deps.Model }
             deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize messageRecord) ("## Raw\n" + msg.Content))
 
             // --- Step: update the topic body (best-effort; logged warning on failure) ---
@@ -172,7 +209,8 @@ module Pipeline =
                         { t with
                             LastUpdated = isoTimestamp msg.Timestamp
                             MessageRefs = Array.append t.MessageRefs [| messagePath |]
-                            SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths) }
+                            SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths)
+                            SpawnedEvents = Array.append t.SpawnedEvents (Array.ofList eventPaths) }
                     let updatedFrontmatter = Frontmatter.serialize merged
                     deps.Vault.Write(topicPath, MarkdownFile.ToString updatedFrontmatter newBody)
                 | None ->

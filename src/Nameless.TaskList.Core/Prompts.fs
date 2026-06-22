@@ -100,6 +100,21 @@ Rules:
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
+    let eventCreateSystem = """You are creating an Event entry for a personal knowledge base.
+Generate the YAML frontmatter and a brief body for a new event file.
+
+Rules:
+- title: short noun phrase naming the occurrence
+- when: ISO 8601 datetime. The reference date of the source message is provided; resolve
+  relative dates ("next Friday", "the 20th") against it. If only a date is known, use 00:00 and set all_day: true.
+- all_day: true when no specific time was given, else false
+- context: array — choose from [family, medical, school, finance, professional, personal-kb]
+- location: a place name if mentioned, else ""
+- people: array of person slugs relevant to the event (use [] if none)
+- reminder_days_before: integer, default 3
+
+Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 
