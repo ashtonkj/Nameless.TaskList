@@ -153,8 +153,8 @@ module Pipeline =
 
             // --- Step: create event files (date-pathed; undated events fall back to the message date) ---
             let parseWhen (s: string) (fallback: System.DateTime) =
-                match System.DateTime.TryParse(s) with
-                | true, dt -> dt
+                match System.DateTimeOffset.TryParse(s) with
+                | true, dto -> dto.DateTime
                 | _ -> fallback
 
             let eventSpec : EntitySpec<Event> =
@@ -167,7 +167,7 @@ module Pipeline =
                     (fun stripped intent ->
                         let flag = "\n\n_Date inferred from message; please confirm._"
                         let ensureDated (e: Event) (body: string) =
-                            match System.DateTime.TryParse(e.When) with
+                            match System.DateTimeOffset.TryParse(e.When) with
                             | true, _ -> { Record = e; Body = body }
                             | _ -> { Record = { e with When = isoTimestamp msg.Timestamp }; Body = body + flag }
                         try
