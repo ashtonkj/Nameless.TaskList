@@ -132,3 +132,12 @@ module Adapters =
                 // F# resolves ExecuteReader() to the inherited DbDataReader overload, so an explicit downcast to NpgsqlDataReader is required
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
                 [ while reader.Read() do yield mapChat reader ]
+            member _.GetMessagesSince(chatJid, since) =
+                use conn = openConnection ()
+                use cmd = new NpgsqlCommand(Queries.GetMessagesSince, conn)
+                cmd.Parameters.AddWithValue("Since", since) |> ignore
+                let p = cmd.Parameters.Add("ChatJid", NpgsqlTypes.NpgsqlDbType.Text)
+                p.Value <- (match chatJid with Some j -> box j | None -> box System.DBNull.Value)
+                // F# resolves ExecuteReader() to the inherited DbDataReader overload, so the downcast is required.
+                use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
+                [ while reader.Read() do yield mapChat reader ]

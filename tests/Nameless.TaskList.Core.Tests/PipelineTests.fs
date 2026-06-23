@@ -12,6 +12,7 @@ type FakeMessages(msg: ChatMessage option) =
     interface IMessageSource with
         member _.GetMessage(_id, _jid) = msg
         member _.GetRecent(_jid, _before, _ex) = []
+        member _.GetMessagesSince(_chatJid, _since) = []
 
 let sampleMessage () : ChatMessage =
     { Id = "M1"; ChatJid = "27800000000@s.whatsapp.net"; ChatName = "Wife"
