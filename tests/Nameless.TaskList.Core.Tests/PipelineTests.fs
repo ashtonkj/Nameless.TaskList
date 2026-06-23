@@ -201,6 +201,7 @@ let ``signal message creates a channel with direct platform and records the topi
     let ch = vault.Files.["channels/whatsapp/wife.md"]   // sampleMessage NormalizedChatName = "Wife"
     Assert.Contains("platform: whatsapp-direct", ch)
     Assert.Contains("message_count: 1", ch)
+    Assert.Contains("last_processed:", ch)                 // activity timestamp recorded
     Assert.Contains("topics/active/family-chat.md", ch)   // active_topics holds the topic
 
 [<Fact>]
@@ -211,6 +212,7 @@ let ``noise message creates a channel and counts it without a topic`` () =
     let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
     Pipeline.processMessage d "M1" "jid" |> ignore
     let ch = vault.Files.["channels/whatsapp/wife.md"]
+    Assert.Contains("platform: whatsapp-direct", ch)
     Assert.Contains("message_count: 1", ch)
     Assert.DoesNotContain("topics/active", ch)
 
