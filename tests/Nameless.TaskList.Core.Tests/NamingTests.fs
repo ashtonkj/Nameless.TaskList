@@ -46,3 +46,9 @@ let ``notePath slugs under notes`` () =
 [<Fact>]
 let ``personPath nests under people and context`` () =
     Assert.Equal("people/medical/dr-naidoo.md", Naming.personPath "medical" "dr-naidoo")
+
+[<Fact>]
+let ``digestPath is dated and kinded`` () =
+    let d = System.DateTime(2026, 6, 23)
+    Assert.Equal("digests/2026-06-23-daily.md", Naming.digestPath d "daily")
+    Assert.Equal("digests/2026-06-23-weekly.md", Naming.digestPath d "weekly")

@@ -165,6 +165,13 @@ type Person =
       Email: string
       Tags: string array }
 
+[<CLIMutable>]
+type Digest =
+    { Type: string
+      Title: string
+      Kind: string
+      Generated: string }
+
 module Frontmatter =
     let private serializer =
         SerializerBuilder()
@@ -225,4 +232,7 @@ module Naming =
 
     let channelPath (channelSlug: string) : string =
         sprintf "channels/whatsapp/%s.md" channelSlug
+
+    let digestPath (day: System.DateTime) (kind: string) : string =
+        sprintf "digests/%04d-%02d-%02d-%s.md" day.Year day.Month day.Day kind
 
