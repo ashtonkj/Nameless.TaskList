@@ -38,14 +38,21 @@ module BulkJobs =
     open Nameless.TaskList.Core.BulkProcessor
 
     let private jobs = ConcurrentDictionary<string, BulkProgress>()
+    let private gate = obj ()
 
     /// Start a background bulk run, unless one is already running. Returns the new job id.
     let tryStart (messages: IMessageSource) (processOne: string -> string -> PipelineResult)
                  (since: System.DateTime) (chatJid: string option) : Result<string, string> =
-        if isRunning jobs.Values then Error "a bulk job is already running"
-        else
-            let jobId = System.Guid.NewGuid().ToString("N")
-            jobs.[jobId] <- { Total = 0; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Done = false; Error = "" }
+        let started =
+            lock gate (fun () ->
+                if isRunning jobs.Values then None
+                else
+                    let jobId = System.Guid.NewGuid().ToString("N")
+                    jobs.[jobId] <- { Total = 0; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Done = false; Error = "" }
+                    Some jobId)
+        match started with
+        | None -> Error "a bulk job is already running"
+        | Some jobId ->
             System.Threading.Tasks.Task.Run(fun () ->
                 try runSince messages processOne since chatJid (fun p -> jobs.[jobId] <- p) |> ignore
                 with ex -> jobs.[jobId] <- { jobs.[jobId] with Done = true; Error = ex.Message }) |> ignore
