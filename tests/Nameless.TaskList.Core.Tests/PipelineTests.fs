@@ -8,11 +8,12 @@ open Nameless.TaskList.Core.Tests.Fakes
 open Xunit
 
 // IMessageSource fake returning a single configured message.
-type FakeMessages(msg: ChatMessage option) =
+type FakeMessages(msg: ChatMessage option, ?media: byte array) =
     interface IMessageSource with
         member _.GetMessage(_id, _jid) = msg
         member _.GetRecent(_jid, _before, _ex) = []
         member _.GetMessagesSince(_chatJid, _since) = []
+        member _.GetMediaBytes(_id, _jid) = media
 
 let sampleMessage () : ChatMessage =
     { Id = "M1"; ChatJid = "27800000000@s.whatsapp.net"; ChatName = "Wife"
@@ -28,7 +29,8 @@ let sampleMessage () : ChatMessage =
 let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = FakeEmbedder(fun _ -> failwith "no embedder configured") :> IEmbedder
-      TopK = 5; SimilarityFloor = 0.5 }
+      TopK = 5; SimilarityFloor = 0.5
+      Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision }
 
 [<Fact>]
 let ``returns NotFound when the message does not exist`` () =
@@ -238,12 +240,83 @@ let ``existing channel increments count, dedupes topic, and preserves body`` () 
     let occurrences = (ch.Split("topics/active/family-chat.md").Length - 1)
     Assert.Equal(1, occurrences)
 
+// A caption-less image message (empty content, media_type=image).
+let private imageMessage () : ChatMessage =
+    { sampleMessage () with Content = ""; MediaType = "image" }
+
+[<Fact>]
+let ``image-only message is described by vision and processed as that text`` () =
+    let vault = FakeVault()
+    // classify the vision text as a signal task, new topic, one task, topic update
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"birthday party invite","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":["RSVP to the party"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Birthday party"}"""
+    let taskFile = Responses.final "---\ntype: Task\ntitle: RSVP to the party\nstatus: pending\npriority: medium\ncontext:\n  - family\n---\nrsvp"
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskFile; topicBody ])
+    let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy; 3uy |]) :> IMessageSource
+    let vision = FakeVision(fun _ -> "INVITE: Ethan's party Saturday 2pm, please RSVP") :> IVision
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = vision }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+        Assert.Contains("vision-extracted", vault.Files.[msgKey])           // body header
+        Assert.Contains("INVITE: Ethan's party", vault.Files.[msgKey])      // the description is the content
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``image-only message falls back to noise when vision fails`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"empty","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy |]) :> IMessageSource
+    let vision = FakeVision(fun _ -> failwith "vision down") :> IVision
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = vision }
+    // vision throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
+    Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
+
+[<Fact>]
+let ``vision-derived noise preserves the text`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"ack","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy; 3uy |]) :> IMessageSource
+    let vision = FakeVision(fun _ -> "SCREENSHOT: random meme text") :> IVision
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = vision }
+    match Pipeline.processMessage d "M1" "jid" with
+    | ProcessedNoise ->
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+        let msgContent = vault.Files.[msgKey]
+        Assert.Contains("vision-extracted", msgContent)           // body header preserved
+        Assert.Contains("SCREENSHOT: random meme text", msgContent)  // the description is preserved
+    | other -> failwithf "expected ProcessedNoise, got %A" other
+
+[<Fact>]
+let ``GetMediaBytes=None falls back to noise`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"empty","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    // FakeMessages with an image message but NO media bytes (None)
+    let messages = FakeMessages(Some(imageMessage ())) :> IMessageSource
+    let vision = FakeVision(fun _ -> failwith "should not be called") :> IVision
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = vision }
+    // GetMediaBytes returns None -> vision is not called -> content stays empty -> classify (scripted noise) -> ProcessedNoise
+    Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
+
 // ── Hybrid embedding topic-match tests ─────────────────────────────────────
 
 let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (topK: int) (floor: float) : PipelineDeps =
     { Messages = FakeMessages(Some(sampleMessage ())) :> IMessageSource
       Vault = vault :> IVault; Chat = chat; Model = "test-model"
-      Embedder = embedder; TopK = topK; SimilarityFloor = floor }
+      Embedder = embedder; TopK = topK; SimilarityFloor = floor
+      Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision }
 
 // Seed one active topic with a known slug + understanding.
 let private seedTopic (v: FakeVault) (slug: string) (title: string) (understanding: string) =

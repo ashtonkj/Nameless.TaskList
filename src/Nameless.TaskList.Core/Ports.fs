@@ -9,6 +9,7 @@ type IMessageSource =
     abstract member GetMessage : id: string * chatJid: string -> ChatMessage option
     abstract member GetRecent : chatJid: string * before: DateTime * excludingId: string -> ChatMessage list
     abstract member GetMessagesSince : chatJid: string option * since: System.DateTime -> ChatMessage list
+    abstract member GetMediaBytes : id: string * chatJid: string -> byte array option
 
 /// Reads and writes markdown files relative to a vault root. Never deletes.
 type IVault =
@@ -25,3 +26,7 @@ type IChatClient =
 /// Produces an embedding vector for a piece of text.
 type IEmbedder =
     abstract member Embed : text: string -> float array
+
+/// Describes an image (and transcribes any text in it) as plain text.
+type IVision =
+    abstract member Describe : imageBytes: byte array -> string

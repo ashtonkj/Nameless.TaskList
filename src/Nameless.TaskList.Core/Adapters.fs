@@ -81,6 +81,27 @@ module Adapters =
                     [| for el in embeddings.[0].EnumerateArray() -> el.GetDouble() |]
                 | _ -> failwith "Ollama /api/embed returned no embeddings"
 
+    // ---- Vision over Ollama ----
+    // Public (serialized) — a private record would serialize to `{}`.
+    type VisionMessage = { role: string; content: string; images: string array }
+    type OllamaVisionRequest = { model: string; messages: VisionMessage array; stream: bool }
+
+    type OllamaVision(httpClient: HttpClient, url: string, model: string) =
+        let prompt =
+            "Describe this image. If it contains text (an invitation, flyer, schedule, notice, or screenshot), transcribe the text verbatim."
+        interface IVision with
+            member _.Describe(imageBytes) =
+                let b64 = System.Convert.ToBase64String(imageBytes)
+                let body =
+                    { model = model; stream = false
+                      messages = [| { role = "user"; content = prompt; images = [| b64 |] } |] }
+                let mediaType = MediaTypeHeaderValue.Parse("application/json")
+                use content = JsonContent.Create(body, mediaType, JsonSerializerOptions(JsonSerializerDefaults.Web))
+                let response = httpClient.PostAsync(Uri(url.TrimEnd('/') + "/api/chat"), content).Result
+                response.EnsureSuccessStatusCode() |> ignore
+                let json = response.Content.ReadAsStringAsync().Result
+                (Response.parseResponse json).Message.Content
+
     // ---- Message source over Postgres ----
     let private getStringOrNull (reader: NpgsqlDataReader) (col: string) =
         let ord = reader.GetOrdinal(col)
@@ -141,3 +162,10 @@ module Adapters =
                 // F# resolves ExecuteReader() to the inherited DbDataReader overload, so the downcast is required.
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
                 [ while reader.Read() do yield mapChat reader ]
+            member _.GetMediaBytes(id, chatJid) =
+                use conn = openConnection ()
+                use cmd = new NpgsqlCommand(Queries.GetMediaBytes, conn)
+                cmd.Parameters.AddWithValue("Id", id) |> ignore
+                cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
+                use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
+                if reader.Read() && not (reader.IsDBNull 0) then Some(reader.GetFieldValue<byte array>(0)) else None

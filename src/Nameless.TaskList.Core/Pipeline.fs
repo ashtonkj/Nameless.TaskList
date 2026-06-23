@@ -12,7 +12,8 @@ module Pipeline =
           Model: string
           Embedder: IEmbedder
           TopK: int
-          SimilarityFloor: float }
+          SimilarityFloor: float
+          Vision: IVision }
 
     type PipelineResult =
         | NotFound
@@ -134,6 +135,21 @@ module Pipeline =
                 Skipped
             else
 
+            // --- Step: image-only messages get a vision description before classify ---
+            let imageDerived, msg =
+                let isImageOnly =
+                    (not (isNull msg.MediaType)) && msg.MediaType = "image"
+                    && System.String.IsNullOrWhiteSpace msg.Content
+                if not isImageOnly then false, msg
+                else
+                    let described =
+                        match deps.Messages.GetMediaBytes(id, chatJid) with
+                        | Some bytes -> (try Some(deps.Vision.Describe bytes) with _ -> None)
+                        | None -> None
+                    match described with
+                    | Some t when not (System.String.IsNullOrWhiteSpace t) -> true, { msg with Content = t }
+                    | _ -> false, msg
+
             // --- Step: classify (tool-enabled, may call get_contexts) ---
             let classifyTools = [ Tools.getContexts deps.Vault ]
             let classifyReply =
@@ -148,7 +164,8 @@ module Pipeline =
                     { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                       Sender = msg.SenderName; Noise = true; Topic = ""
                       SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
-                deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) "")
+                let noiseBody = if imageDerived then "## Image (vision-extracted)\n" + msg.Content else ""
+                deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) noiseBody)
                 updateChannel deps msg channelSlug None
                 ProcessedNoise
             else
@@ -395,7 +412,8 @@ module Pipeline =
                 { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                   Sender = msg.SenderName; Noise = false; Topic = topicPath
                   SpawnedTasks = Array.ofList taskPaths; SpawnedEvents = Array.ofList eventPaths; SpawnedNotes = Array.ofList notePaths; ProcessedBy = deps.Model }
-            deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize messageRecord) ("## Raw\n" + msg.Content))
+            let rawBody = (if imageDerived then "## Image (vision-extracted)\n" else "## Raw\n") + msg.Content
+            deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize messageRecord) rawBody)
 
             // --- Step: update the topic body (best-effort; logged warning on failure) ---
             (try

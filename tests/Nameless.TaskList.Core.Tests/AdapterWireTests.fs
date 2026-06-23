@@ -107,3 +107,36 @@ let ``OllamaEmbedder throws with clear message when embeddings is empty`` () =
         Assert.ThrowsAny<System.Exception>(fun () -> embedder.Embed("x") |> ignore)
     finally
         listener.Stop()
+
+[<Fact>]
+let ``OllamaVision posts the image to /api/chat and returns the description`` () =
+    let listener = new HttpListener()
+    listener.Prefixes.Add("http://localhost:11694/")
+    listener.Start()
+    let captured = ref ""
+    let capturedPath = ref ""
+    let worker =
+        Thread(fun () ->
+            let ctx = listener.GetContext()
+            capturedPath.Value <- ctx.Request.Url.AbsolutePath
+            use reader = new StreamReader(ctx.Request.InputStream)
+            captured.Value <- reader.ReadToEnd()
+            let body = Text.Encoding.UTF8.GetBytes("""{"model":"m","message":{"role":"assistant","content":"a birthday invite"},"done":true}""")
+            ctx.Response.StatusCode <- 200
+            ctx.Response.OutputStream.Write(body, 0, body.Length)
+            ctx.Response.OutputStream.Close())
+    worker.IsBackground <- true
+    worker.Start()
+    try
+        use http = new HttpClient()
+        let vision = OllamaVision(http, "http://localhost:11694", "gemma3:latest") :> Ports.IVision
+        let text = vision.Describe([| 1uy; 2uy; 3uy |])
+        worker.Join(TimeSpan.FromSeconds 5.0) |> ignore
+        Assert.Equal("/api/chat", capturedPath.Value)
+        Assert.NotEqual<string>("{}", captured.Value.Trim())      // public-envelope regression
+        Assert.Contains("\"images\"", captured.Value)
+        Assert.Contains("gemma3:latest", captured.Value)
+        Assert.Contains("AQID", captured.Value)                    // base64 of [1;2;3]
+        Assert.Equal("a birthday invite", text)
+    finally
+        listener.Stop()
