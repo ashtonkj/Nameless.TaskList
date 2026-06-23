@@ -34,7 +34,9 @@ module Indexer =
                     match mf.FrontMatter with
                     | Some fm -> Some(p, Frontmatter.deserialize<'T> fm)
                     | None -> skipped <- skipped + 1; None
-                with _ -> skipped <- skipped + 1; None)
+                with
+                | :? System.IO.IOException -> reraise()
+                | _ -> skipped <- skipped + 1; None)
         parsed, skipped
 
     let private writeIndex (vault: IVault) (root: string) (title: string) (body: string) =
@@ -75,7 +77,9 @@ module Indexer =
         |> List.groupBy (fun (_, t) -> (if nz t.Status = "" then "unknown" else t.Status))
         |> List.iter (fun (status, rows) ->
             sb.AppendLine(sprintf "## %s" status) |> ignore
-            for (path, t) in rows |> List.sortByDescending (fun (_, t) -> nz t.LastUpdated) do
+            for (path, t) in rows |> List.sortByDescending (fun (_, t) ->
+                                        let lu = nz t.LastUpdated
+                                        (not (System.String.IsNullOrWhiteSpace lu), lu)) do
                 sb.AppendLine(sprintf "- %s — last updated %s" (wikilink path) (nz t.LastUpdated)) |> ignore
             sb.AppendLine() |> ignore)
         writeIndex vault "topics" "Topic Index" (sb.ToString().TrimEnd())
