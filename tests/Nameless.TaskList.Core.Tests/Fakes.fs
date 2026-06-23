@@ -28,6 +28,11 @@ type FakeChatClient(scripted: ChatResponse list) =
             this.Calls <- this.Calls + 1
             queue.Dequeue()
 
+/// Test embedder: maps text -> vector via the supplied function (which may throw).
+type FakeEmbedder(embed: string -> float array) =
+    interface IEmbedder with
+        member _.Embed(text) = embed text
+
 module Responses =
     let final (content: string) : ChatResponse =
         { Message = { Content = content; ToolCalls = [||] } }

@@ -60,6 +60,25 @@ module Adapters =
                 let json = response.Content.ReadAsStringAsync().Result
                 Response.parseResponse json
 
+    // ---- Embedder over Ollama ----
+    // NOTE: must NOT be `private` — a private record serializes to `{}` (System.Text.Json
+    // only serializes public types' members), which would send an empty body.
+    type OllamaEmbedRequest = { model: string; input: string }
+
+    type OllamaEmbedder(httpClient: HttpClient, url: string, model: string) =
+        interface IEmbedder with
+            member _.Embed(text) =
+                let body = { model = model; input = text }
+                let mediaType = MediaTypeHeaderValue.Parse("application/json")
+                let content = JsonContent.Create(body, mediaType, JsonSerializerOptions(JsonSerializerDefaults.Web))
+                let endpoint = url.TrimEnd('/') + "/api/embed"
+                let response = httpClient.PostAsync(Uri(endpoint), content).Result
+                response.EnsureSuccessStatusCode() |> ignore
+                let json = response.Content.ReadAsStringAsync().Result
+                use doc = JsonDocument.Parse(json)
+                let first = doc.RootElement.GetProperty("embeddings").[0]
+                [| for el in first.EnumerateArray() -> el.GetDouble() |]
+
     // ---- Message source over Postgres ----
     let private getStringOrNull (reader: NpgsqlDataReader) (col: string) =
         let ord = reader.GetOrdinal(col)

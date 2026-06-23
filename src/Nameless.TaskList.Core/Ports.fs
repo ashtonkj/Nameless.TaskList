@@ -20,3 +20,7 @@ type IVault =
 /// One round-trip to the chat model. messages and tools are pre-serialized objects.
 type IChatClient =
     abstract member Chat : messages: obj array * tools: obj array -> ChatResponse
+
+/// Produces an embedding vector for a piece of text.
+type IEmbedder =
+    abstract member Embed : text: string -> float array
