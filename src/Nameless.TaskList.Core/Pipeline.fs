@@ -75,6 +75,22 @@ module Pipeline =
                 ActiveTopics = activeTopics }
         deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize updated) body)
 
+    /// Extract the "## Current understanding" section of a topic body (fallback: whole body).
+    let private understandingOf (body: string) =
+        let b = if isNull body then "" else body
+        let marker = "## Current understanding"
+        let i = b.IndexOf(marker)
+        if i < 0 then b.Trim()
+        else
+            let after = b.Substring(i + marker.Length)
+            let next = after.IndexOf("\n## ")
+            (if next < 0 then after else after.Substring(0, next)).Trim()
+
+    /// A concise topic title derived from an intent (used only by the clearly-new fast path).
+    let private titleFromIntent (intent: string) =
+        let s = (if isNull intent then "" else intent).Trim()
+        if s.Length <= 60 then s else s.Substring(0, 60).Trim()
+
     /// Find a collision-free path by inserting -2, -3, ... before the ".md" extension.
     // Precondition: basePath ends in ".md" (all Naming.*Path helpers satisfy this).
     let private freePath (vault: IVault) (basePath: string) =
@@ -137,29 +153,80 @@ module Pipeline =
                 ProcessedNoise
             else
 
-            // --- Step: topic match (tool-enabled: get_topics / get_topic) ---
-            let topicTools = [ Tools.getTopics deps.Vault; Tools.getTopic deps.Vault ]
-            let topicReply =
-                Agent.runConversation deps.Chat topicTools Prompts.topicMatchSystem
-                    (sprintf "New message intent: %s" classification.Intent)
-            match Prompts.parseTopicMatch topicReply with
-            | Error e -> LlmError e
-            | Ok matchResult ->
+            // --- Step: topic match (embedding shortlist + LLM confirm; fallback to tool-enabled) ---
+            let createNewTopic (title: string) =
+                let slug = Naming.slug title
+                let topicRecord : Topic =
+                    { Type = "Topic"; Title = title; Status = "active"
+                      Context = classification.Contexts; Channel = channelSlug
+                      People = classification.PeopleMentioned
+                      FirstSeen = isoTimestamp msg.Timestamp; LastUpdated = isoTimestamp msg.Timestamp
+                      SpawnedTasks = [||]; SpawnedEvents = [||]; MessageRefs = [||] }
+                let body = "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+                deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
+                slug, Naming.topicPath slug
 
-            let _, topicPath =
-                if matchResult.Match && not (System.String.IsNullOrWhiteSpace matchResult.TopicSlug) then
-                    matchResult.TopicSlug, Naming.topicPath matchResult.TopicSlug
+            // Active topics: (slug, title, understanding)
+            let activeTopics =
+                deps.Vault.ListFiles "topics/active"
+                |> List.choose (fun path ->
+                    try
+                        let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                        match mf.FrontMatter with
+                        | Some fm ->
+                            let t = Frontmatter.deserialize<Topic> fm
+                            Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, understandingOf mf.Content)
+                        | None -> None
+                    with _ -> None)
+
+            // Embedding shortlist: Some candidates (possibly empty) when embedding works; None to fall back.
+            let shortlist =
+                if List.isEmpty activeTopics then None
                 else
-                    let slug = Naming.slug matchResult.NewTopicTitle
-                    let topicRecord : Topic =
-                        { Type = "Topic"; Title = matchResult.NewTopicTitle; Status = "active"
-                          Context = classification.Contexts; Channel = channelSlug
-                          People = classification.PeopleMentioned
-                          FirstSeen = isoTimestamp msg.Timestamp; LastUpdated = isoTimestamp msg.Timestamp
-                          SpawnedTasks = [||]; SpawnedEvents = [||]; MessageRefs = [||] }
-                    let body = "## Current understanding\n\n## Open questions\n\n## Resolved\n"
-                    deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
-                    slug, Naming.topicPath slug
+                    try
+                        let intentVec = deps.Embedder.Embed classification.Intent
+                        activeTopics
+                        |> List.map (fun (slug, title, und) ->
+                            let score = Similarity.cosine intentVec (deps.Embedder.Embed (title + "\n" + und))
+                            (slug, title, und, score))
+                        |> List.filter (fun (_, _, _, s) -> s >= deps.SimilarityFloor)
+                        |> List.sortByDescending (fun (_, _, _, s) -> s)
+                        |> List.truncate deps.TopK
+                        |> Some
+                    with _ -> None
+
+            let topicOutcome : Result<string * string, string> =
+                match shortlist with
+                | Some [] ->
+                    // clearly new — skip the LLM topic-match call
+                    Ok (createNewTopic (titleFromIntent classification.Intent))
+                | Some candidates ->
+                    let candidateText =
+                        candidates
+                        |> List.map (fun (slug, title, und, _) -> sprintf "slug: %s\ntitle: %s\nunderstanding: %s" slug title und)
+                        |> String.concat "\n\n"
+                    let payload = sprintf "New message intent: %s\n\nCandidate topics:\n%s" classification.Intent candidateText
+                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.topicMatchSystem payload) with
+                    | Error e -> Error e
+                    | Ok m ->
+                        let slugs = candidates |> List.map (fun (s, _, _, _) -> s) |> Set.ofList
+                        if m.Match && Set.contains m.TopicSlug slugs then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug)
+                        else
+                            let title = if System.String.IsNullOrWhiteSpace m.NewTopicTitle then titleFromIntent classification.Intent else m.NewTopicTitle
+                            Ok (createNewTopic title)
+                | None ->
+                    // fallback: today's tool-enabled match over all active topics
+                    let topicTools = [ Tools.getTopics deps.Vault; Tools.getTopic deps.Vault ]
+                    let reply = Agent.runConversation deps.Chat topicTools Prompts.topicMatchSystem (sprintf "New message intent: %s" classification.Intent)
+                    match Prompts.parseTopicMatch reply with
+                    | Error e -> Error e
+                    | Ok m ->
+                        if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug)
+                        else Ok (createNewTopic m.NewTopicTitle)
+
+            match topicOutcome with
+            | Error e -> LlmError e
+            | Ok (_, topicPath) ->
 
             // --- Step: create task files via the shared entity writer ---
             let taskSpec : EntitySpec<Task> =
