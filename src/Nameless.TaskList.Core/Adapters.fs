@@ -38,7 +38,10 @@ module Adapters =
                 else []
 
     // ---- Chat client over Ollama ----
-    type private OllamaRequest =
+    // NOTE: must NOT be `private`. System.Text.Json only serializes public types'
+    // members, so a private record serializes to `{}` — sending an empty body that
+    // Ollama rejects with 400 "missing request body". (Caught only by a live run.)
+    type OllamaRequest =
         { model: string
           messages: obj array
           tools: obj array

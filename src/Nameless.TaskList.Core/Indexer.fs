@@ -10,8 +10,11 @@ module Indexer =
         { Tasks: int; Topics: int; Events: int; Commitments: int
           Notes: int; People: int; Channels: int; Skipped: int }
 
+    // NOTE: must NOT be `private`. YamlDotNet (like System.Text.Json) only serializes
+    // public types' members, so a private record serializes to `{}` — index files would
+    // get an empty frontmatter instead of `type: Index` / title / last_updated.
     [<CLIMutable>]
-    type private IndexMeta = { Type: string; Title: string; LastUpdated: string }
+    type IndexMeta = { Type: string; Title: string; LastUpdated: string }
 
     let private nz (s: string) = if isNull s then "" else s
     let private joinArr (a: string array) = if isNull a then "" else System.String.Join(", ", a)
