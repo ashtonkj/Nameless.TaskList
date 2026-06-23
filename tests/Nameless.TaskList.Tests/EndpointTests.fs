@@ -49,3 +49,10 @@ let ``reindex summary maps to 200`` () =
     let summary : Nameless.TaskList.Core.Indexer.IndexSummary =
         { Tasks = 2; Topics = 1; Events = 0; Commitments = 0; Notes = 0; People = 0; Channels = 1; Skipped = 0 }
     Assert.Equal(200, statusOfResult (ReindexHandler.toHttp summary))
+
+[<Fact>]
+let ``digest result maps to 200`` () =
+    let r : Nameless.TaskList.Core.Digest.DigestResult =
+        { Path = "digests/2026-06-23-daily.md"; Text = "hi"
+          TaskCount = 2; EventCount = 1; CommitmentCount = 0; StaleTopicCount = 1 }
+    Assert.Equal(200, statusOfResult (DigestHandler.toHttp r))

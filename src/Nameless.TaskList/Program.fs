@@ -47,5 +47,18 @@ module Program =
                 try Indexer.regenerate vault |> ReindexHandler.toHttp
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
+        let runDigest (vault: IVault) (chat: IChatClient) (p: Digest.DigestParams) : Microsoft.AspNetCore.Http.IResult =
+            try
+                let deps : Digest.DigestDeps =
+                    { Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]; Today = System.DateTime.Now }
+                Digest.generate deps p |> DigestHandler.toHttp
+            with ex -> Results.Json({| error = ex.Message |}, statusCode = 500)
+
+        app.MapPost("/digest/daily", System.Func<IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(
+            fun (vault: IVault) (chat: IChatClient) -> runDigest vault chat Digest.DigestParams.daily)) |> ignore
+
+        app.MapPost("/digest/weekly", System.Func<IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(
+            fun (vault: IVault) (chat: IChatClient) -> runDigest vault chat Digest.DigestParams.weekly)) |> ignore
+
         app.Run()
         0

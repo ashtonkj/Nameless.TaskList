@@ -192,3 +192,27 @@ Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
 
     let parseClassification (raw: string) : Result<Classification, string> = tryParse<Classification> raw
     let parseTopicMatch (raw: string) : Result<TopicMatch, string> = tryParse<TopicMatch> raw
+
+    let dailyBriefingSystem = """You are generating a daily briefing for a personal knowledge base.
+Be concise. The owner is a busy professional — surface only what matters today and this week.
+
+Structure your response as plain text (not markdown headers) in this order:
+1. Today's priorities — top 3 tasks, one line each
+2. Upcoming in 7 days — events and task deadlines
+3. Needs attention — commitments without tasks, stale topics
+4. Optional: one low-priority item worth doing if time allows
+
+Keep the whole briefing under 200 words.
+Use plain language — this may be delivered as a WhatsApp message."""
+
+    let weeklyDigestSystem = """You are generating a weekly digest for a personal knowledge base.
+Be concise. The owner is a busy professional — surface what matters for the week ahead.
+
+Structure your response as plain text (not markdown headers) in this order:
+1. Top priorities — the highest-scored tasks, one line each
+2. Upcoming in 14 days — events and task deadlines
+3. Needs attention — commitments without tasks, stale topics needing review
+4. Optional: one item worth getting ahead on
+
+Keep the whole digest under 300 words.
+Use plain language — this may be delivered as a WhatsApp message."""
