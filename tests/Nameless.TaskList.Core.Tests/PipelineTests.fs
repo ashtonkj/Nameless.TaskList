@@ -182,3 +182,51 @@ let ``person stub with out-of-list context is clamped to family`` () =
     // The stub context "personal-kb" is not in knownContexts, so it should be clamped to "family".
     Assert.True(vault.Files.ContainsKey("people/family/coach-smith.md"))
     Assert.False(vault.Files.ContainsKey("people/personal-kb/coach-smith.md"))
+
+// ── Channel update tests ────────────────────────────────────────────────────
+
+let private emptySignalClassify =
+    Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"hi","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+
+let private newTopicMatch (title: string) =
+    Responses.final (sprintf """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"%s"}""" title)
+
+[<Fact>]
+let ``signal message creates a channel with direct platform and records the topic`` () =
+    let vault = FakeVault()
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ emptySignalClassify; newTopicMatch "Family chat"; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    let ch = vault.Files.["channels/whatsapp/wife.md"]   // sampleMessage NormalizedChatName = "Wife"
+    Assert.Contains("platform: whatsapp-direct", ch)
+    Assert.Contains("message_count: 1", ch)
+    Assert.Contains("topics/active/family-chat.md", ch)   // active_topics holds the topic
+
+[<Fact>]
+let ``noise message creates a channel and counts it without a topic`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"ack","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    let ch = vault.Files.["channels/whatsapp/wife.md"]
+    Assert.Contains("message_count: 1", ch)
+    Assert.DoesNotContain("topics/active", ch)
+
+[<Fact>]
+let ``existing channel increments count, dedupes topic, and preserves body`` () =
+    let vault = FakeVault()
+    // Pre-seed a channel that already counted 5 messages and already lists the topic.
+    vault.Seed("channels/whatsapp/wife.md",
+        "---\ntype: Channel\ntitle: Wife\nplatform: whatsapp-direct\ncontext: ''\npeople: []\nsignal_weight: high\nmessage_count: 5\nlast_processed: 2026-06-10T00:00:00\nactive_topics:\n  - topics/active/family-chat.md\n---\nExisting channel notes.")
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ emptySignalClassify; newTopicMatch "Family chat"; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    let ch = vault.Files.["channels/whatsapp/wife.md"]
+    Assert.Contains("message_count: 6", ch)
+    Assert.Contains("Existing channel notes.", ch)
+    // topic appears exactly once (deduped)
+    let occurrences = (ch.Split("topics/active/family-chat.md").Length - 1)
+    Assert.Equal(1, occurrences)

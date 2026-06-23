@@ -223,3 +223,6 @@ module Naming =
     let personPath (context: string) (personSlug: string) : string =
         sprintf "people/%s/%s.md" context personSlug
 
+    let channelPath (channelSlug: string) : string =
+        sprintf "channels/whatsapp/%s.md" channelSlug
+
