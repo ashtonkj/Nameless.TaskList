@@ -15,6 +15,7 @@
         <Compile Include="ParsingTests.fs" />
         <Compile Include="PipelineTests.fs" />
         <Compile Include="VaultTests.fs" />
+        <Compile Include="IndexerTests.fs" />
         <Compile Include="Sanity.fs" />
     </ItemGroup>
 

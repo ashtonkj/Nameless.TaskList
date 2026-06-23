@@ -41,3 +41,34 @@ let ``Exists is false for missing files`` () =
         Assert.False(vault.Exists("nope.md"))
     finally
         Directory.Delete(root, true)
+
+[<Fact>]
+let ``ListFilesRecursive returns files from nested directories`` () =
+    let root = tempRoot ()
+    try
+        let vault = FileSystemVault(root) :> IVault
+        vault.Write("events/2026/06/a.md", "x")
+        vault.Write("events/2026/07/b.md", "y")
+        vault.Write("events/index.md", "i")
+        let files = vault.ListFilesRecursive("events") |> List.sort
+        Assert.Equal<string list>([ "events/2026/06/a.md"; "events/2026/07/b.md"; "events/index.md" ], files)
+    finally
+        Directory.Delete(root, true)
+
+[<Fact>]
+let ``ListFilesRecursive returns empty for a missing directory`` () =
+    let root = tempRoot ()
+    try
+        let vault = FileSystemVault(root) :> IVault
+        Assert.Empty(vault.ListFilesRecursive("nope"))
+    finally
+        Directory.Delete(root, true)
+
+[<Fact>]
+let ``FakeVault ListFilesRecursive returns nested keys under the prefix`` () =
+    let vault = Nameless.TaskList.Core.Tests.Fakes.FakeVault()
+    vault.Seed("people/medical/a.md", "x")
+    vault.Seed("people/school/b.md", "y")
+    vault.Seed("tasks/pending/c.md", "z")
+    let files = (vault :> IVault).ListFilesRecursive("people") |> List.sort
+    Assert.Equal<string list>([ "people/medical/a.md"; "people/school/b.md" ], files)

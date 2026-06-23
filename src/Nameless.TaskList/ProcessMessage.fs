@@ -15,3 +15,8 @@ module ProcessMessageHandler =
         | ProcessedNoise -> Results.Ok(box {| noise = true |})
         | Processed(topic, tasks) -> Results.Ok(box {| topic = topic; tasks = tasks |})
         | LlmError msg -> Results.Json({| error = msg |}, statusCode = 502)
+
+module ReindexHandler =
+    /// Maps an index summary to a 200 response.
+    let toHttp (summary: Nameless.TaskList.Core.Indexer.IndexSummary) : IResult =
+        Results.Ok(box summary)

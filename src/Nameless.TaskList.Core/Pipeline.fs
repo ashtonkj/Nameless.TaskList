@@ -45,6 +45,33 @@ module Pipeline =
     let private personExists (vault: IVault) (personSlug: string) =
         knownContexts |> List.exists (fun ctx -> vault.Exists(Naming.personPath ctx personSlug))
 
+    /// Create-if-missing + activity update for the message's channel file.
+    let private updateChannel (deps: PipelineDeps) (msg: ChatMessage) (channelSlug: string) (topic: string option) =
+        let path = Naming.channelPath channelSlug
+        let stub : Channel =
+            { Type = "Channel"; Title = msg.NormalizedChatName
+              Platform = (if msg.IsGroup then "whatsapp-group" else "whatsapp-direct")
+              Context = ""; People = [||]; SignalWeight = "medium"
+              MessageCount = 0; LastProcessed = System.DateTime.MinValue; ActiveTopics = [||] }
+        let current, body =
+            if deps.Vault.Exists path then
+                let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                match mf.FrontMatter with
+                | Some fm -> (Frontmatter.deserialize<Channel> fm), mf.Content
+                | None -> stub, mf.Content
+            else stub, ""
+        let existingTopics = if isNull current.ActiveTopics then [||] else current.ActiveTopics
+        let activeTopics =
+            match topic with
+            | Some t when not (Array.contains t existingTopics) -> Array.append existingTopics [| t |]
+            | _ -> existingTopics
+        let updated =
+            { current with
+                LastProcessed = msg.Timestamp
+                MessageCount = current.MessageCount + 1
+                ActiveTopics = activeTopics }
+        deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize updated) body)
+
     /// Find a collision-free path by inserting -2, -3, ... before the ".md" extension.
     // Precondition: basePath ends in ".md" (all Naming.*Path helpers satisfy this).
     let private freePath (vault: IVault) (basePath: string) =
@@ -103,6 +130,7 @@ module Pipeline =
                       Sender = msg.SenderName; Noise = true; Topic = ""
                       SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
                 deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) "")
+                updateChannel deps msg channelSlug None
                 ProcessedNoise
             else
 
@@ -313,4 +341,5 @@ module Pipeline =
              with ex ->
                 eprintfn "Topic update failed for %s (message already written): %s" topicPath ex.Message)
 
+            updateChannel deps msg channelSlug (Some topicPath)
             Processed(topicPath, taskPaths)

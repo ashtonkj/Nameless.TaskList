@@ -29,6 +29,13 @@ module Adapters =
                     |> Array.map (fun p -> Path.GetRelativePath(root, p).Replace('\\', '/'))
                     |> List.ofArray
                 else []
+            member _.ListFilesRecursive(relDir) =
+                let dir = full relDir
+                if Directory.Exists(dir) then
+                    Directory.GetFiles(dir, "*", SearchOption.AllDirectories)
+                    |> Array.map (fun p -> Path.GetRelativePath(root, p).Replace('\\', '/'))
+                    |> List.ofArray
+                else []
 
     // ---- Chat client over Ollama ----
     type private OllamaRequest =

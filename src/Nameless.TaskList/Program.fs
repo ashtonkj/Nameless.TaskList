@@ -10,6 +10,7 @@ open Microsoft.Extensions.Hosting
 open Nameless.TaskList.Core.Ports
 open Nameless.TaskList.Core.Adapters
 open Nameless.TaskList.Core.Pipeline
+open Nameless.TaskList.Core
 
 module Program =
 
@@ -40,6 +41,11 @@ module Program =
                     |> ProcessMessageHandler.toHttp
                 with ex ->
                     Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
+
+        app.MapPost("/reindex", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
+            fun (vault: IVault) ->
+                try Indexer.regenerate vault |> ReindexHandler.toHttp
+                with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         app.Run()
         0
