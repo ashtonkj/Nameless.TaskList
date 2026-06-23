@@ -21,6 +21,7 @@
         <Compile Include="DigestTests.fs" />
         <Compile Include="AdapterWireTests.fs" />
         <Compile Include="SimilarityTests.fs" />
+        <Compile Include="BulkProcessorTests.fs" />
     </ItemGroup>
 
     <ItemGroup>
