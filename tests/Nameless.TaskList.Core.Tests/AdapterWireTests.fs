@@ -53,3 +53,57 @@ let ``OllamaChatClient sends a non-empty request body with model and messages`` 
         Assert.Contains("get_contexts", captured.Value)
     finally
         listener.Stop()
+
+[<Fact>]
+let ``OllamaEmbedder posts model+input to /api/embed and parses embeddings[0]`` () =
+    let listener = new HttpListener()
+    listener.Prefixes.Add("http://localhost:11692/")
+    listener.Start()
+    let captured = ref ""
+    let capturedPath = ref ""
+    let worker =
+        Thread(fun () ->
+            let ctx = listener.GetContext()
+            capturedPath.Value <- ctx.Request.Url.AbsolutePath
+            use reader = new StreamReader(ctx.Request.InputStream)
+            captured.Value <- reader.ReadToEnd()
+            let body = Text.Encoding.UTF8.GetBytes("""{"model":"m","embeddings":[[0.1,0.2,0.3]]}""")
+            ctx.Response.StatusCode <- 200
+            ctx.Response.OutputStream.Write(body, 0, body.Length)
+            ctx.Response.OutputStream.Close())
+    worker.IsBackground <- true
+    worker.Start()
+    try
+        use http = new HttpClient()
+        let embedder = OllamaEmbedder(http, "http://localhost:11692", "nomic-embed-text") :> Ports.IEmbedder
+        let vec = embedder.Embed("hello")
+        worker.Join(TimeSpan.FromSeconds 5.0) |> ignore
+        Assert.Equal("/api/embed", capturedPath.Value)
+        Assert.NotEqual<string>("{}", captured.Value.Trim())     // public-envelope regression
+        Assert.Contains("\"model\"", captured.Value)
+        Assert.Contains("\"input\"", captured.Value)
+        Assert.Contains("nomic-embed-text", captured.Value)
+        Assert.Equal<float array>([| 0.1; 0.2; 0.3 |], vec)
+    finally
+        listener.Stop()
+
+[<Fact>]
+let ``OllamaEmbedder throws with clear message when embeddings is empty`` () =
+    let listener = new HttpListener()
+    listener.Prefixes.Add("http://localhost:11693/")
+    listener.Start()
+    let worker =
+        Thread(fun () ->
+            let ctx = listener.GetContext()
+            let body = Text.Encoding.UTF8.GetBytes("""{"model":"m","embeddings":[]}""")
+            ctx.Response.StatusCode <- 200
+            ctx.Response.OutputStream.Write(body, 0, body.Length)
+            ctx.Response.OutputStream.Close())
+    worker.IsBackground <- true
+    worker.Start()
+    try
+        use http = new HttpClient()
+        let embedder = OllamaEmbedder(http, "http://localhost:11693", "nomic-embed-text") :> Ports.IEmbedder
+        Assert.ThrowsAny<System.Exception>(fun () -> embedder.Embed("x") |> ignore)
+    finally
+        listener.Stop()

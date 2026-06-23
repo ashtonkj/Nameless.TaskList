@@ -22,8 +22,12 @@ let sampleMessage () : ChatMessage =
       MediaType = null; FileName = null; AlbumId = null; AlbumIndex = None
       Timestamp = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc) }
 
+// Default embedder throws — existing tests seed no active topics, so the topic-match
+// step never calls it (and if it ever did, the pipeline falls back gracefully).
 let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
-    { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model" }
+    { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+      Embedder = FakeEmbedder(fun _ -> failwith "no embedder configured") :> IEmbedder
+      TopK = 5; SimilarityFloor = 0.5 }
 
 [<Fact>]
 let ``returns NotFound when the message does not exist`` () =
@@ -232,6 +236,91 @@ let ``existing channel increments count, dedupes topic, and preserves body`` () 
     // topic appears exactly once (deduped)
     let occurrences = (ch.Split("topics/active/family-chat.md").Length - 1)
     Assert.Equal(1, occurrences)
+
+// ── Hybrid embedding topic-match tests ─────────────────────────────────────
+
+let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (topK: int) (floor: float) : PipelineDeps =
+    { Messages = FakeMessages(Some(sampleMessage ())) :> IMessageSource
+      Vault = vault :> IVault; Chat = chat; Model = "test-model"
+      Embedder = embedder; TopK = topK; SimilarityFloor = floor }
+
+// Seed one active topic with a known slug + understanding.
+let private seedTopic (v: FakeVault) (slug: string) (title: string) (understanding: string) =
+    v.Seed(sprintf "topics/active/%s.md" slug,
+           sprintf "---\ntype: Topic\ntitle: %s\nstatus: active\ncontext:\n  - family\n---\n## Current understanding\n%s\n\n## Open questions\n\n## Resolved\n" title understanding)
+
+let private signalClassify =
+    Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"the birthday party plan","action_required":true,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+
+let private topicBody = Responses.final "## Current understanding\nx\n\n## Open questions\n\n## Resolved\n"
+
+[<Fact>]
+let ``embedding shortlists a similar topic and the LLM confirms the match`` () =
+    let vault = FakeVault()
+    seedTopic vault "birthday-party" "Birthday party" "planning the party"
+    // intent vector close to the birthday topic's vector
+    let embedder = FakeEmbedder(fun t -> if t.Contains("birthday") || t.Contains("Birthday") || t.Contains("party") then [| 1.0; 0.0 |] else [| 0.0; 1.0 |]) :> IEmbedder
+    // classify, then the topic-match LLM confirm (matches the candidate), then topic update
+    let confirm = Responses.final """{"match":true,"topic_slug":"birthday-party","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    let chat = FakeChatClient([ signalClassify; confirm; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Equal("topics/active/birthday-party.md", topic)
+    | other -> failwithf "expected Processed match, got %A" other
+
+[<Fact>]
+let ``no topic above the floor creates a new topic without an LLM topic-match call`` () =
+    let vault = FakeVault()
+    seedTopic vault "unrelated" "Unrelated" "something else entirely"
+    // every embedding orthogonal -> cosine 0 < floor -> empty shortlist -> fast path
+    let embedder = FakeEmbedder(fun t -> if t.Contains("birthday") then [| 1.0; 0.0 |] else [| 0.0; 1.0 |]) :> IEmbedder
+    // Only classify + topic update are scripted; a topic-match LLM call would underflow the queue.
+    let chat = FakeChatClient([ signalClassify; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) ->
+        Assert.StartsWith("topics/active/", topic)
+        Assert.DoesNotContain("unrelated", topic)        // a NEW topic, not the seeded one
+    | other -> failwithf "expected Processed new, got %A" other
+
+[<Fact>]
+let ``LLM returning a slug outside the shortlist creates a new topic`` () =
+    let vault = FakeVault()
+    seedTopic vault "birthday-party" "Birthday party" "planning the party"
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder   // everything similar
+    let halluc = Responses.final """{"match":true,"topic_slug":"not-a-candidate","confidence":0.9,"match_reason":"x","new_topic_title":"Fresh topic"}"""
+    let chat = FakeChatClient([ signalClassify; halluc; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Equal("topics/active/fresh-topic.md", topic)   // from NewTopicTitle, not the hallucinated slug
+    | other -> failwithf "expected Processed new, got %A" other
+
+[<Fact>]
+let ``embedder failure falls back to the tool-enabled topic match`` () =
+    let vault = FakeVault()
+    seedTopic vault "birthday-party" "Birthday party" "planning the party"
+    let embedder = FakeEmbedder(fun _ -> failwith "embed down") :> IEmbedder
+    // fallback path runs the tool-enabled LLM topic match (1 call), here returning a match
+    let fallbackMatch = Responses.final """{"match":true,"topic_slug":"birthday-party","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    let chat = FakeChatClient([ signalClassify; fallbackMatch; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Equal("topics/active/birthday-party.md", topic)
+    | other -> failwithf "expected Processed match via fallback, got %A" other
+
+[<Fact>]
+let ``LLM confirming with wrong casing still matches the real candidate slug`` () =
+    let vault = FakeVault()
+    seedTopic vault "birthday-party" "Birthday party" "planning the party"
+    // intent and topic map to the same vector (cosine 1.0) — well above the floor
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder
+    // LLM echoes the slug with mixed casing — the guard must normalise before comparing
+    let confirm = Responses.final """{"match":true,"topic_slug":"Birthday-Party","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    let chat = FakeChatClient([ signalClassify; confirm; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Equal("topics/active/birthday-party.md", topic)   // real slug, not a new duplicate
+    | other -> failwithf "expected Processed match, got %A" other
 
 [<Fact>]
 let ``accepted entity reply backfills type and pipeline-owned linkage`` () =

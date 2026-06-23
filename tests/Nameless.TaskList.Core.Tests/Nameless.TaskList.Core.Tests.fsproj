@@ -20,6 +20,7 @@
         <Compile Include="WeightsTests.fs" />
         <Compile Include="DigestTests.fs" />
         <Compile Include="AdapterWireTests.fs" />
+        <Compile Include="SimilarityTests.fs" />
     </ItemGroup>
 
     <ItemGroup>
