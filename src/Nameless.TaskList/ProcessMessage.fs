@@ -20,3 +20,10 @@ module ReindexHandler =
     /// Maps an index summary to a 200 response.
     let toHttp (summary: Nameless.TaskList.Core.Indexer.IndexSummary) : IResult =
         Results.Ok(box summary)
+
+module DigestHandler =
+    /// Maps a digest result to a 200 response with its text + counts.
+    let toHttp (r: Nameless.TaskList.Core.Digest.DigestResult) : IResult =
+        Results.Ok(box {| path = r.Path; text = r.Text
+                          taskCount = r.TaskCount; eventCount = r.EventCount
+                          commitmentCount = r.CommitmentCount; staleTopicCount = r.StaleTopicCount |})
