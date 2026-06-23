@@ -83,3 +83,34 @@ let ``past due counts as within 2 days`` () =
 let ``blocked status adds the negative modifier`` () =
     let t = task [| "family" |] "" "blocked"
     Assert.Equal(7 - 2, Scoring.scoreTask Weights.defaults today t)
+
+[<Fact>]
+let ``parse handles the verbatim DESIGN priority-weights block`` () =
+    let md = """
+## Context weights (higher = more urgent)
+medical:      10
+finance:      10
+school:        9
+family:        7
+professional:  5
+personal-kb:   2
+
+## Modifier rules
++3  task has explicit `due` date within 7 days
++5  task has explicit `due` date within 2 days
++5  commitment with no task_assigned and due within 7 days
++2  task blocks another task
++1  task involves an external person (requires coordination)
+-2  task.status == "blocked" (deprioritise until unblocked)
+"""
+    let w = Weights.parse md
+    Assert.Equal(10, w.ContextWeights.["medical"])
+    Assert.Equal(10, w.ContextWeights.["finance"])
+    Assert.Equal(9, w.ContextWeights.["school"])
+    Assert.Equal(7, w.ContextWeights.["family"])
+    Assert.Equal(5, w.ContextWeights.["professional"])
+    Assert.Equal(2, w.ContextWeights.["personal-kb"])
+    Assert.Equal(3, w.DueWithin7)           // +3 line comes before +5 line
+    Assert.Equal(5, w.DueWithin2)
+    Assert.Equal(5, w.UnassignedCommitmentDueWithin7)
+    Assert.Equal(-2, w.Blocked)
