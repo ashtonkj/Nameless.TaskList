@@ -18,6 +18,7 @@
         <Compile Include="IndexerTests.fs" />
         <Compile Include="Sanity.fs" />
         <Compile Include="WeightsTests.fs" />
+        <Compile Include="DigestTests.fs" />
     </ItemGroup>
 
     <ItemGroup>
