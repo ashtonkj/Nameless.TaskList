@@ -27,3 +27,42 @@ module DigestHandler =
         Results.Ok(box {| path = r.Path; text = r.Text
                           taskCount = r.TaskCount; eventCount = r.EventCount
                           commitmentCount = r.CommitmentCount; staleTopicCount = r.StaleTopicCount |})
+
+[<CLIMutable>]
+type ProcessSinceRequest = { Since: string; ChatJid: string }
+
+module BulkJobs =
+    open System.Collections.Concurrent
+    open Nameless.TaskList.Core.Ports
+    open Nameless.TaskList.Core.Pipeline
+    open Nameless.TaskList.Core.BulkProcessor
+
+    let private jobs = ConcurrentDictionary<string, BulkProgress>()
+
+    /// Start a background bulk run, unless one is already running. Returns the new job id.
+    let tryStart (messages: IMessageSource) (processOne: string -> string -> PipelineResult)
+                 (since: System.DateTime) (chatJid: string option) : Result<string, string> =
+        if isRunning jobs.Values then Error "a bulk job is already running"
+        else
+            let jobId = System.Guid.NewGuid().ToString("N")
+            jobs.[jobId] <- { Total = 0; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Done = false; Error = "" }
+            System.Threading.Tasks.Task.Run(fun () ->
+                try runSince messages processOne since chatJid (fun p -> jobs.[jobId] <- p) |> ignore
+                with ex -> jobs.[jobId] <- { jobs.[jobId] with Done = true; Error = ex.Message }) |> ignore
+            Ok jobId
+
+    let get (jobId: string) : BulkProgress option =
+        match jobs.TryGetValue jobId with
+        | true, p -> Some p
+        | _ -> None
+
+module BulkHandler =
+    let startToHttp (r: Result<string, string>) : IResult =
+        match r with
+        | Ok jobId -> Results.Json({| jobId = jobId |}, statusCode = 202)
+        | Error msg -> Results.Json({| error = msg |}, statusCode = 409)
+
+    let progressToHttp (p: Nameless.TaskList.Core.BulkProcessor.BulkProgress option) : IResult =
+        match p with
+        | Some prog -> Results.Ok(box prog)
+        | None -> Results.NotFound()

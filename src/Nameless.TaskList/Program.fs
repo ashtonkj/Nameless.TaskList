@@ -66,5 +66,22 @@ module Program =
         app.MapPost("/digest/weekly", System.Func<IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(
             fun (vault: IVault) (chat: IChatClient) -> runDigest vault chat Digest.DigestParams.weekly)) |> ignore
 
+        app.MapPost("/messages/process-since", System.Func<ProcessSinceRequest, IMessageSource, IVault, IChatClient, IEmbedder, Microsoft.AspNetCore.Http.IResult>(
+            fun (req: ProcessSinceRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) ->
+                match System.DateTime.TryParse(req.Since) with
+                | false, _ -> Results.Json({| error = "invalid or missing 'since' date" |}, statusCode = 400)
+                | true, since ->
+                    let topK = match System.Int32.TryParse(cfg.["TopicMatch:TopK"]) with | true, v -> v | _ -> 5
+                    let floor = match System.Double.TryParse(cfg.["TopicMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.5
+                    let deps =
+                        { Messages = messages; Vault = vault; Chat = chat
+                          Model = cfg.["Ollama:Model"]; Embedder = embedder; TopK = topK; SimilarityFloor = floor }
+                    let processOne id jid = processMessage deps id jid
+                    let chatJid = if System.String.IsNullOrWhiteSpace req.ChatJid then None else Some req.ChatJid
+                    BulkJobs.tryStart messages processOne since chatJid |> BulkHandler.startToHttp)) |> ignore
+
+        app.MapGet("/messages/process-since/{jobId}", System.Func<string, Microsoft.AspNetCore.Http.IResult>(
+            fun (jobId: string) -> BulkJobs.get jobId |> BulkHandler.progressToHttp)) |> ignore
+
         app.Run()
         0

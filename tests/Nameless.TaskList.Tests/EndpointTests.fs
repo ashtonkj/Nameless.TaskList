@@ -56,3 +56,18 @@ let ``digest result maps to 200`` () =
         { Path = "digests/2026-06-23-daily.md"; Text = "hi"
           TaskCount = 2; EventCount = 1; CommitmentCount = 0; StaleTopicCount = 1 }
     Assert.Equal(200, statusOfResult (DigestHandler.toHttp r))
+
+[<Fact>]
+let ``bulk start Ok maps to 202`` () =
+    Assert.Equal(202, statusOfResult (BulkHandler.startToHttp (Ok "job123")))
+
+[<Fact>]
+let ``bulk start Error maps to 409`` () =
+    Assert.Equal(409, statusOfResult (BulkHandler.startToHttp (Error "already running")))
+
+[<Fact>]
+let ``bulk progress Some maps to 200 and None to 404`` () =
+    let p : Nameless.TaskList.Core.BulkProcessor.BulkProgress =
+        { Total = 3; Processed = 2; Noise = 0; Skipped = 1; Errors = 0; Done = true; Error = "" }
+    Assert.Equal(200, statusOfResult (BulkHandler.progressToHttp (Some p)))
+    Assert.Equal(404, statusOfResult (BulkHandler.progressToHttp None))
