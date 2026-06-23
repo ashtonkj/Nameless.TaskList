@@ -33,6 +33,11 @@ type FakeEmbedder(embed: string -> float array) =
     interface IEmbedder with
         member _.Embed(text) = embed text
 
+/// Test vision adapter: maps image bytes -> text via the supplied function (which may throw).
+type FakeVision(describe: byte array -> string) =
+    interface IVision with
+        member _.Describe(imageBytes) = describe imageBytes
+
 module Responses =
     let final (content: string) : ChatResponse =
         { Message = { Content = content; ToolCalls = [||] } }

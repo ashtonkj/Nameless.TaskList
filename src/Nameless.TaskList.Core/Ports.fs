@@ -26,3 +26,7 @@ type IChatClient =
 /// Produces an embedding vector for a piece of text.
 type IEmbedder =
     abstract member Embed : text: string -> float array
+
+/// Describes an image (and transcribes any text in it) as plain text.
+type IVision =
+    abstract member Describe : imageBytes: byte array -> string
