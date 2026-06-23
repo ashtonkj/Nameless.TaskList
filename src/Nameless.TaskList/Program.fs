@@ -68,6 +68,7 @@ module Program =
 
         app.MapPost("/messages/process-since", System.Func<ProcessSinceRequest, IMessageSource, IVault, IChatClient, IEmbedder, Microsoft.AspNetCore.Http.IResult>(
             fun (req: ProcessSinceRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) ->
+                // 'since' is parsed with the host's DateTimeKind and compared against the stored message timestamp as-is; pass an explicit offset for exactness near a day boundary.
                 match System.DateTime.TryParse(req.Since) with
                 | false, _ -> Results.Json({| error = "invalid or missing 'since' date" |}, statusCode = 400)
                 | true, since ->

@@ -1,6 +1,8 @@
 module Nameless.TaskList.Tests.EndpointTests
 
 open Nameless.TaskList
+open Nameless.TaskList.Core
+open Nameless.TaskList.Core.Ports
 open Nameless.TaskList.Core.Pipeline
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
@@ -71,3 +73,34 @@ let ``bulk progress Some maps to 200 and None to 404`` () =
         { Total = 3; Processed = 2; Noise = 0; Skipped = 1; Errors = 0; Done = true; Error = "" }
     Assert.Equal(200, statusOfResult (BulkHandler.progressToHttp (Some p)))
     Assert.Equal(404, statusOfResult (BulkHandler.progressToHttp None))
+
+// Fake IMessageSource that throws on GetMessagesSince to test background job error handling.
+type private FailingMessageSource() =
+    interface IMessageSource with
+        member _.GetMessage(_, _) = None
+        member _.GetRecent(_, _, _) = []
+        member _.GetMessagesSince(_, _) = failwith "db down"
+
+[<Fact>]
+let ``bulk job background failure is caught and stored`` () =
+    let fake = FailingMessageSource() :> IMessageSource
+    let result = BulkJobs.tryStart fake (fun _ _ -> Skipped) (System.DateTime(2026, 6, 1)) None
+    let jobId =
+        match result with
+        | Ok id -> id
+        | Error e -> failwith e
+
+    // Poll for Done, bounded to ~1 second (50 iterations * 20ms).
+    let mutable progress = None
+    for i = 1 to 50 do
+        System.Threading.Thread.Sleep(20)
+        progress <- BulkJobs.get jobId
+        match progress with
+        | Some p when p.Done -> ()
+        | _ -> ()
+
+    let final = progress
+    Assert.True(Option.isSome final, "Expected to find the job after polling")
+    let p = Option.get final
+    Assert.True(p.Done, "Expected job to be done")
+    Assert.True((p.Error.Length > 0 && p.Error.Contains("db down")), sprintf "Expected error containing 'db down', got: %s" p.Error)
