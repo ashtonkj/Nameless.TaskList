@@ -34,3 +34,18 @@ let ``LlmError maps to 502`` () =
 [<Fact>]
 let ``Processed maps to 200`` () =
     Assert.Equal(200, statusOf (Processed("topics/active/x.md", [ "tasks/pending/y.md" ])))
+
+let private statusOfResult (r: IResult) : int =
+    let ctx = DefaultHttpContext()
+    let services = ServiceCollection()
+    services.AddLogging() |> ignore
+    services.AddRouting() |> ignore
+    ctx.RequestServices <- services.BuildServiceProvider()
+    (r.ExecuteAsync(ctx)).Wait()
+    ctx.Response.StatusCode
+
+[<Fact>]
+let ``reindex summary maps to 200`` () =
+    let summary : Nameless.TaskList.Core.Indexer.IndexSummary =
+        { Tasks = 2; Topics = 1; Events = 0; Commitments = 0; Notes = 0; People = 0; Channels = 1; Skipped = 0 }
+    Assert.Equal(200, statusOfResult (ReindexHandler.toHttp summary))
