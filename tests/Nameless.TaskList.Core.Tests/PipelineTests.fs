@@ -22,8 +22,12 @@ let sampleMessage () : ChatMessage =
       MediaType = null; FileName = null; AlbumId = null; AlbumIndex = None
       Timestamp = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc) }
 
+// Default embedder throws — existing tests seed no active topics, so the topic-match
+// step never calls it (and if it ever did, the pipeline falls back gracefully).
 let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
-    { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model" }
+    { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+      Embedder = FakeEmbedder(fun _ -> failwith "no embedder configured") :> IEmbedder
+      TopK = 5; SimilarityFloor = 0.5 }
 
 [<Fact>]
 let ``returns NotFound when the message does not exist`` () =

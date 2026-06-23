@@ -28,15 +28,21 @@ module Program =
         builder.Services.AddSingleton<IChatClient>(fun sp ->
             let http = sp.GetRequiredService<HttpClient>()
             OllamaChatClient(http, cfg.["Ollama:Url"], cfg.["Ollama:Model"]) :> IChatClient) |> ignore
+        builder.Services.AddSingleton<IEmbedder>(fun sp ->
+            let http = sp.GetRequiredService<HttpClient>()
+            let embedModel = if isNull cfg.["Ollama:EmbedModel"] then "nomic-embed-text" else cfg.["Ollama:EmbedModel"]
+            OllamaEmbedder(http, cfg.["Ollama:Url"], embedModel) :> IEmbedder) |> ignore
 
         let app = builder.Build()
 
-        app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(
-            fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) ->
+        app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, Microsoft.AspNetCore.Http.IResult>(
+            fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) ->
                 try
+                    let topK = match System.Int32.TryParse(cfg.["TopicMatch:TopK"]) with | true, v -> v | _ -> 5
+                    let floor = match System.Double.TryParse(cfg.["TopicMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.5
                     let deps =
                         { Messages = messages; Vault = vault; Chat = chat
-                          Model = cfg.["Ollama:Model"] }
+                          Model = cfg.["Ollama:Model"]; Embedder = embedder; TopK = topK; SimilarityFloor = floor }
                     processMessage deps req.Id req.ChatJid
                     |> ProcessMessageHandler.toHttp
                 with ex ->

@@ -9,7 +9,10 @@ module Pipeline =
         { Messages: IMessageSource
           Vault: IVault
           Chat: IChatClient
-          Model: string }
+          Model: string
+          Embedder: IEmbedder
+          TopK: int
+          SimilarityFloor: float }
 
     type PipelineResult =
         | NotFound
