@@ -72,3 +72,22 @@ let ``LLM failure falls back to a deterministic body`` () =
     let r = Digest.generate d DigestParams.daily
     Assert.True(v.Files.ContainsKey(r.Path))
     Assert.Contains("Urgent", r.Text)        // fallback renders the selected task titles
+
+[<Fact>]
+let ``tied-score tasks are ordered by soonest due date ascending`` () =
+    // Two pending tasks, same context (medical) → equal base score.
+    // Due dates > 7 days away so neither gets a due-proximity modifier.
+    // Sooner task has a LATER-alphabetically title ("Zzz") to ensure the tie-break
+    // is on due date, not title; the buggy descending-title sort would put "Zzz" last.
+    let v = FakeVault()
+    v.Seed("tasks/pending/sooner.md", "---\ntype: Task\ntitle: Zzz\nstatus: pending\npriority: medium\ndue: 2026-08-01\ncontext:\n  - medical\n---\nb")
+    v.Seed("tasks/pending/later.md", "---\ntype: Task\ntitle: Aaa\nstatus: pending\npriority: medium\ndue: 2026-09-01\ncontext:\n  - medical\n---\nb")
+    // FakeChatClient([]) → queue underflow → fallback body used (deterministic rendering)
+    let d = { Vault = v :> IVault; Chat = FakeChatClient([]) :> IChatClient; Model = "test-model"; Today = today }
+    let r = Digest.generate d DigestParams.daily
+    // Sooner due date ("Zzz", 2026-08-01) must appear before later due date ("Aaa", 2026-09-01)
+    let idxZzz = r.Text.IndexOf("Zzz")
+    let idxAaa = r.Text.IndexOf("Aaa")
+    Assert.True(idxZzz >= 0, "Expected 'Zzz' in digest text")
+    Assert.True(idxAaa >= 0, "Expected 'Aaa' in digest text")
+    Assert.True(idxZzz < idxAaa, sprintf "Expected 'Zzz' (sooner due) before 'Aaa' (later due), but found positions %d vs %d" idxZzz idxAaa)

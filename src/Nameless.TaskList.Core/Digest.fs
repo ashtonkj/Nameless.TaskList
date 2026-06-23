@@ -61,7 +61,13 @@ module Digest =
                 let s = (nz t.Status).ToLowerInvariant()
                 s = "pending" || s = "in-progress")
             |> List.map (fun t -> t, Scoring.scoreTask weights deps.Today t)
-            |> List.sortByDescending (fun (t, score) -> (score, nz t.Due, nz t.Title))
+            |> List.sortWith (fun (t1, s1) (t2, s2) ->
+                let byScore = compare s2 s1               // score descending
+                if byScore <> 0 then byScore
+                else
+                    let byDue = compare (nz t1.Due) (nz t2.Due)   // due ascending
+                    if byDue <> 0 then byDue
+                    else compare (nz t1.Title) (nz t2.Title))     // title ascending
             |> List.truncate p.TopN
 
         let upcomingEvents =
