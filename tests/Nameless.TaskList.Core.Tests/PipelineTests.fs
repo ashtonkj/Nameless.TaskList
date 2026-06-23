@@ -278,6 +278,38 @@ let ``image-only message falls back to noise when vision fails`` () =
     // vision throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
+[<Fact>]
+let ``vision-derived noise preserves the text`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"ack","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy; 3uy |]) :> IMessageSource
+    let vision = FakeVision(fun _ -> "SCREENSHOT: random meme text") :> IVision
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = vision }
+    match Pipeline.processMessage d "M1" "jid" with
+    | ProcessedNoise ->
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+        let msgContent = vault.Files.[msgKey]
+        Assert.Contains("vision-extracted", msgContent)           // body header preserved
+        Assert.Contains("SCREENSHOT: random meme text", msgContent)  // the description is preserved
+    | other -> failwithf "expected ProcessedNoise, got %A" other
+
+[<Fact>]
+let ``GetMediaBytes=None falls back to noise`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"empty","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    // FakeMessages with an image message but NO media bytes (None)
+    let messages = FakeMessages(Some(imageMessage ())) :> IMessageSource
+    let vision = FakeVision(fun _ -> failwith "should not be called") :> IVision
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = vision }
+    // GetMediaBytes returns None -> vision is not called -> content stays empty -> classify (scripted noise) -> ProcessedNoise
+    Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
+
 // ── Hybrid embedding topic-match tests ─────────────────────────────────────
 
 let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (topK: int) (floor: float) : PipelineDeps =

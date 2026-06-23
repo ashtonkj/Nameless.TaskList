@@ -164,7 +164,8 @@ module Pipeline =
                     { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                       Sender = msg.SenderName; Noise = true; Topic = ""
                       SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
-                deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) "")
+                let noiseBody = if imageDerived then "## Image (vision-extracted)\n" + msg.Content else ""
+                deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) noiseBody)
                 updateChannel deps msg channelSlug None
                 ProcessedNoise
             else
