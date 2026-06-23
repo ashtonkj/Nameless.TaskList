@@ -80,6 +80,7 @@ type private FailingMessageSource() =
         member _.GetMessage(_, _) = None
         member _.GetRecent(_, _, _) = []
         member _.GetMessagesSince(_, _) = failwith "db down"
+        member _.GetMediaBytes(_, _) = None
 
 [<Fact>]
 let ``bulk job background failure is caught and stored`` () =

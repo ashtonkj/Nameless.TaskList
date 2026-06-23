@@ -13,6 +13,7 @@ type private FakeSince(msgs: ChatMessage list) =
         member _.GetMessage(_id, _jid) = None
         member _.GetRecent(_jid, _before, _ex) = []
         member _.GetMessagesSince(_chatJid, _since) = msgs
+        member _.GetMediaBytes(_id, _jid) = None
 
 let private msg (id: string) : ChatMessage =
     { Id = id; ChatJid = "jid"; ChatName = "c"; NormalizedChatName = "c"; IsGroup = false

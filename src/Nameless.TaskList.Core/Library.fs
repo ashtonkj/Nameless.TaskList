@@ -144,6 +144,13 @@ WHERE m.chat_jid NOT LIKE 'status%'
   AND (@ChatJid IS NULL OR m.chat_jid = @ChatJid)
 ORDER BY m.timestamp ASC;
         """
+
+    let GetMediaBytes =
+        """
+SELECT media
+FROM messages
+WHERE id = @Id AND chat_jid = @ChatJid AND octet_length(media) > 0;
+        """
         
 type ChatMessage =
     {

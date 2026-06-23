@@ -141,3 +141,10 @@ module Adapters =
                 // F# resolves ExecuteReader() to the inherited DbDataReader overload, so the downcast is required.
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
                 [ while reader.Read() do yield mapChat reader ]
+            member _.GetMediaBytes(id, chatJid) =
+                use conn = openConnection ()
+                use cmd = new NpgsqlCommand(Queries.GetMediaBytes, conn)
+                cmd.Parameters.AddWithValue("Id", id) |> ignore
+                cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
+                use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
+                if reader.Read() && not (reader.IsDBNull 0) then Some(reader.GetFieldValue<byte array>(0)) else None

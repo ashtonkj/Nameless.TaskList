@@ -8,11 +8,12 @@ open Nameless.TaskList.Core.Tests.Fakes
 open Xunit
 
 // IMessageSource fake returning a single configured message.
-type FakeMessages(msg: ChatMessage option) =
+type FakeMessages(msg: ChatMessage option, ?media: byte array) =
     interface IMessageSource with
         member _.GetMessage(_id, _jid) = msg
         member _.GetRecent(_jid, _before, _ex) = []
         member _.GetMessagesSince(_chatJid, _since) = []
+        member _.GetMediaBytes(_id, _jid) = media
 
 let sampleMessage () : ChatMessage =
     { Id = "M1"; ChatJid = "27800000000@s.whatsapp.net"; ChatName = "Wife"
