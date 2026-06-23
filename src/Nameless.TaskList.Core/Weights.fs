@@ -46,3 +46,31 @@ module Weights =
           DueWithin2 = pick "within 2 days" defaults.DueWithin2
           UnassignedCommitmentDueWithin7 = pick "commitment with no task_assigned" defaults.UnassignedCommitmentDueWithin7
           Blocked = pick "status == \"blocked\"" defaults.Blocked }
+
+module Scoring =
+
+    open Nameless.TaskList.Core.KnowledgeBase
+
+    /// Days from `today` (date only) to the parsed `due`; None if unparseable/blank.
+    let private daysUntil (today: System.DateTime) (due: string) : int option =
+        match System.DateTimeOffset.TryParse(due) with
+        | true, dto -> Some((dto.Date - today.Date).Days)
+        | _ -> None
+
+    let scoreTask (w: Weights.ScoringWeights) (today: System.DateTime) (t: Task) : int =
+        let baseScore =
+            if isNull t.Context then 0
+            else
+                t.Context
+                |> Array.fold (fun acc c ->
+                    match Map.tryFind c w.ContextWeights with
+                    | Some v -> max acc v
+                    | None -> acc) 0
+        let dueMod =
+            match daysUntil today t.Due with
+            | Some d when d <= 2 -> w.DueWithin2     // within 2 days, incl. past-due
+            | Some d when d <= 7 -> w.DueWithin7
+            | _ -> 0
+        let blockedMod =
+            if (if isNull t.Status then "" else t.Status).ToLowerInvariant() = "blocked" then w.Blocked else 0
+        baseScore + dueMod + blockedMod

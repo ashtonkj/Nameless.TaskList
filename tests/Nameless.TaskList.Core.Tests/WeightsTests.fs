@@ -39,3 +39,47 @@ let ``parse returns defaults on garbage`` () =
     let w = Weights.parse "this is not a weights file"
     Assert.Equal(Weights.defaults.DueWithin2, w.DueWithin2)
     Assert.Equal(Weights.defaults.ContextWeights.["finance"], w.ContextWeights.["finance"])
+
+open System
+open Nameless.TaskList.Core.KnowledgeBase
+
+let private task (context: string array) (due: string) (status: string) : Task =
+    { Type = "Task"; Title = "T"; Status = status; Priority = "medium"
+      Due = due; Context = context; People = [||]; Topic = ""; SourceMessage = "" }
+
+let private today = DateTime(2026, 6, 23)
+
+[<Fact>]
+let ``score uses the max context weight`` () =
+    let t = task [| "family"; "medical" |] "" "pending"
+    Assert.Equal(10, Scoring.scoreTask Weights.defaults today t)   // medical 10 > family 7, no due
+
+[<Fact>]
+let ``unknown and empty contexts contribute zero base`` () =
+    Assert.Equal(0, Scoring.scoreTask Weights.defaults today (task [| "unknown" |] "" "pending"))
+    Assert.Equal(0, Scoring.scoreTask Weights.defaults today (task [||] "" "pending"))
+
+[<Fact>]
+let ``due within 2 days adds the 2-day modifier only`` () =
+    let t = task [| "family" |] "2026-06-24" "pending"   // tomorrow
+    Assert.Equal(7 + 5, Scoring.scoreTask Weights.defaults today t)
+
+[<Fact>]
+let ``due within 7 days adds the 7-day modifier`` () =
+    let t = task [| "family" |] "2026-06-28" "pending"   // 5 days out
+    Assert.Equal(7 + 3, Scoring.scoreTask Weights.defaults today t)
+
+[<Fact>]
+let ``due far away or blank adds no due modifier`` () =
+    Assert.Equal(7, Scoring.scoreTask Weights.defaults today (task [| "family" |] "2026-09-01" "pending"))
+    Assert.Equal(7, Scoring.scoreTask Weights.defaults today (task [| "family" |] "" "pending"))
+
+[<Fact>]
+let ``past due counts as within 2 days`` () =
+    let t = task [| "family" |] "2026-06-01" "pending"   // overdue
+    Assert.Equal(7 + 5, Scoring.scoreTask Weights.defaults today t)
+
+[<Fact>]
+let ``blocked status adds the negative modifier`` () =
+    let t = task [| "family" |] "" "blocked"
+    Assert.Equal(7 - 2, Scoring.scoreTask Weights.defaults today t)
