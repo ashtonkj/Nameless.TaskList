@@ -32,17 +32,22 @@ module Program =
             let http = sp.GetRequiredService<HttpClient>()
             let embedModel = if isNull cfg.["Ollama:EmbedModel"] then "nomic-embed-text" else cfg.["Ollama:EmbedModel"]
             OllamaEmbedder(http, cfg.["Ollama:Url"], embedModel) :> IEmbedder) |> ignore
+        builder.Services.AddSingleton<IVision>(fun sp ->
+            let http = sp.GetRequiredService<HttpClient>()
+            let visionModel = if isNull cfg.["Ollama:VisionModel"] then "gemma3:latest" else cfg.["Ollama:VisionModel"]
+            OllamaVision(http, cfg.["Ollama:Url"], visionModel) :> IVision) |> ignore
 
         let app = builder.Build()
 
-        app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, Microsoft.AspNetCore.Http.IResult>(
-            fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) ->
+        app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, Microsoft.AspNetCore.Http.IResult>(
+            fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) (vision: IVision) ->
                 try
                     let topK = match System.Int32.TryParse(cfg.["TopicMatch:TopK"]) with | true, v -> v | _ -> 5
                     let floor = match System.Double.TryParse(cfg.["TopicMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.5
                     let deps =
                         { Messages = messages; Vault = vault; Chat = chat
-                          Model = cfg.["Ollama:Model"]; Embedder = embedder; TopK = topK; SimilarityFloor = floor }
+                          Model = cfg.["Ollama:Model"]; Embedder = embedder; TopK = topK; SimilarityFloor = floor
+                          Vision = vision }
                     processMessage deps req.Id req.ChatJid
                     |> ProcessMessageHandler.toHttp
                 with ex ->
@@ -66,8 +71,8 @@ module Program =
         app.MapPost("/digest/weekly", System.Func<IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(
             fun (vault: IVault) (chat: IChatClient) -> runDigest vault chat Digest.DigestParams.weekly)) |> ignore
 
-        app.MapPost("/messages/process-since", System.Func<ProcessSinceRequest, IMessageSource, IVault, IChatClient, IEmbedder, Microsoft.AspNetCore.Http.IResult>(
-            fun (req: ProcessSinceRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) ->
+        app.MapPost("/messages/process-since", System.Func<ProcessSinceRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, Microsoft.AspNetCore.Http.IResult>(
+            fun (req: ProcessSinceRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) (vision: IVision) ->
                 // 'since' is parsed with the host's DateTimeKind and compared against the stored message timestamp as-is; pass an explicit offset for exactness near a day boundary.
                 match System.DateTime.TryParse(req.Since) with
                 | false, _ -> Results.Json({| error = "invalid or missing 'since' date" |}, statusCode = 400)
@@ -76,7 +81,8 @@ module Program =
                     let floor = match System.Double.TryParse(cfg.["TopicMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.5
                     let deps =
                         { Messages = messages; Vault = vault; Chat = chat
-                          Model = cfg.["Ollama:Model"]; Embedder = embedder; TopK = topK; SimilarityFloor = floor }
+                          Model = cfg.["Ollama:Model"]; Embedder = embedder; TopK = topK; SimilarityFloor = floor
+                          Vision = vision }
                     let processOne id jid = processMessage deps id jid
                     let chatJid = if System.String.IsNullOrWhiteSpace req.ChatJid then None else Some req.ChatJid
                     BulkJobs.tryStart messages processOne since chatJid |> BulkHandler.startToHttp)) |> ignore
