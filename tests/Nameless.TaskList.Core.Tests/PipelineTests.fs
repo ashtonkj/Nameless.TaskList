@@ -309,6 +309,20 @@ let ``embedder failure falls back to the tool-enabled topic match`` () =
     | other -> failwithf "expected Processed match via fallback, got %A" other
 
 [<Fact>]
+let ``LLM confirming with wrong casing still matches the real candidate slug`` () =
+    let vault = FakeVault()
+    seedTopic vault "birthday-party" "Birthday party" "planning the party"
+    // intent and topic map to the same vector (cosine 1.0) — well above the floor
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder
+    // LLM echoes the slug with mixed casing — the guard must normalise before comparing
+    let confirm = Responses.final """{"match":true,"topic_slug":"Birthday-Party","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    let chat = FakeChatClient([ signalClassify; confirm; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Equal("topics/active/birthday-party.md", topic)   // real slug, not a new duplicate
+    | other -> failwithf "expected Processed match, got %A" other
+
+[<Fact>]
 let ``accepted entity reply backfills type and pipeline-owned linkage`` () =
     let vault = FakeVault()
     let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"do the thing","action_required":true,"urgency":"high","people_mentioned":[],"entities":{"tasks":["Do the thing"],"events":[],"commitments":[],"notes":[]}}"""

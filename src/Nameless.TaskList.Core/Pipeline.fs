@@ -209,9 +209,11 @@ module Pipeline =
                     match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.topicMatchSystem payload) with
                     | Error e -> Error e
                     | Ok m ->
-                        let slugs = candidates |> List.map (fun (s, _, _, _) -> s) |> Set.ofList
-                        if m.Match && Set.contains m.TopicSlug slugs then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug)
-                        else
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
+                        match m.Match, matched with
+                        | true, Some (slug, _, _, _) -> Ok (slug, Naming.topicPath slug)
+                        | _ ->
                             let title = if System.String.IsNullOrWhiteSpace m.NewTopicTitle then titleFromIntent classification.Intent else m.NewTopicTitle
                             Ok (createNewTopic title)
                 | None ->
