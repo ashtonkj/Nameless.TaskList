@@ -56,6 +56,15 @@ let ``regenerate writes events index in chronological order`` () =
     Assert.True(idx.IndexOf("events/2026/06/early") < idx.IndexOf("events/2026/07/late"))
 
 [<Fact>]
+let ``regenerate puts undated events last in events index`` () =
+    let v = FakeVault()
+    v.Seed("events/2026/06/dated.md", "---\ntype: Event\ntitle: Dated\nwhen: 2026-06-01T09:00:00+02:00\ncontext:\n  - family\n---\nb")
+    v.Seed("events/2026/06/undated.md", "---\ntype: Event\ntitle: Undated\nwhen: ''\ncontext:\n  - family\n---\nb")
+    Indexer.regenerate (v :> IVault) |> ignore
+    let idx = v.Files.["events/index.md"]
+    Assert.True(idx.IndexOf("events/2026/06/dated") < idx.IndexOf("events/2026/06/undated"))
+
+[<Fact>]
 let ``regenerate flags commitments with no assigned task`` () =
     let v = seedRest ()
     Indexer.regenerate (v :> IVault) |> ignore

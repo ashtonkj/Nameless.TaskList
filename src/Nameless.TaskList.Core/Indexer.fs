@@ -57,7 +57,7 @@ module Indexer =
         let sb = StringBuilder()
         items
         |> List.sortBy (fun (path, t) -> (taskStatusRank t.Status, priorityRank t.Priority, nz t.Due, path))
-        |> List.groupBy (fun (_, t) -> (if nz t.Status = "" then "unknown" else t.Status))
+        |> List.groupBy (fun (_, t) -> let s = (nz t.Status).ToLowerInvariant() in if s = "" then "unknown" else s)
         |> List.iter (fun (status, rows) ->
             sb.AppendLine(sprintf "## %s" status) |> ignore
             for (path, t) in rows do
@@ -74,7 +74,7 @@ module Indexer =
         let sb = StringBuilder()
         items
         |> List.sortBy (fun (_, t) -> topicStatusRank t.Status)
-        |> List.groupBy (fun (_, t) -> (if nz t.Status = "" then "unknown" else t.Status))
+        |> List.groupBy (fun (_, t) -> let s = (nz t.Status).ToLowerInvariant() in if s = "" then "unknown" else s)
         |> List.iter (fun (status, rows) ->
             sb.AppendLine(sprintf "## %s" status) |> ignore
             for (path, t) in rows |> List.sortByDescending (fun (_, t) ->
@@ -116,7 +116,7 @@ module Indexer =
         let sb = StringBuilder()
         items
         |> List.sortBy (fun (path, c) -> (commitmentStatusRank c.Status, nz c.Due, path))
-        |> List.groupBy (fun (_, c) -> (if nz c.Status = "" then "unknown" else c.Status))
+        |> List.groupBy (fun (_, c) -> let s = (nz c.Status).ToLowerInvariant() in if s = "" then "unknown" else s)
         |> List.iter (fun (status, rows) ->
             sb.AppendLine(sprintf "## %s" status) |> ignore
             for (path, c) in rows do
