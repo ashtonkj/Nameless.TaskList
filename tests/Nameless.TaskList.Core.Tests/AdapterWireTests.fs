@@ -86,3 +86,24 @@ let ``OllamaEmbedder posts model+input to /api/embed and parses embeddings[0]`` 
         Assert.Equal<float array>([| 0.1; 0.2; 0.3 |], vec)
     finally
         listener.Stop()
+
+[<Fact>]
+let ``OllamaEmbedder throws with clear message when embeddings is empty`` () =
+    let listener = new HttpListener()
+    listener.Prefixes.Add("http://localhost:11693/")
+    listener.Start()
+    let worker =
+        Thread(fun () ->
+            let ctx = listener.GetContext()
+            let body = Text.Encoding.UTF8.GetBytes("""{"model":"m","embeddings":[]}""")
+            ctx.Response.StatusCode <- 200
+            ctx.Response.OutputStream.Write(body, 0, body.Length)
+            ctx.Response.OutputStream.Close())
+    worker.IsBackground <- true
+    worker.Start()
+    try
+        use http = new HttpClient()
+        let embedder = OllamaEmbedder(http, "http://localhost:11693", "nomic-embed-text") :> Ports.IEmbedder
+        Assert.ThrowsAny<System.Exception>(fun () -> embedder.Embed("x") |> ignore)
+    finally
+        listener.Stop()

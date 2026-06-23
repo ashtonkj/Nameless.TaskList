@@ -70,14 +70,16 @@ module Adapters =
             member _.Embed(text) =
                 let body = { model = model; input = text }
                 let mediaType = MediaTypeHeaderValue.Parse("application/json")
-                let content = JsonContent.Create(body, mediaType, JsonSerializerOptions(JsonSerializerDefaults.Web))
+                use content = JsonContent.Create(body, mediaType, JsonSerializerOptions(JsonSerializerDefaults.Web))
                 let endpoint = url.TrimEnd('/') + "/api/embed"
                 let response = httpClient.PostAsync(Uri(endpoint), content).Result
                 response.EnsureSuccessStatusCode() |> ignore
                 let json = response.Content.ReadAsStringAsync().Result
                 use doc = JsonDocument.Parse(json)
-                let first = doc.RootElement.GetProperty("embeddings").[0]
-                [| for el in first.EnumerateArray() -> el.GetDouble() |]
+                match doc.RootElement.TryGetProperty("embeddings") with
+                | true, embeddings when embeddings.GetArrayLength() > 0 ->
+                    [| for el in embeddings.[0].EnumerateArray() -> el.GetDouble() |]
+                | _ -> failwith "Ollama /api/embed returned no embeddings"
 
     // ---- Message source over Postgres ----
     let private getStringOrNull (reader: NpgsqlDataReader) (col: string) =
