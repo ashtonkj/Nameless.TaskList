@@ -19,6 +19,9 @@ let ``regenerate writes a tasks index ordering high priority before low`` () =
     let v = seedCore ()
     Indexer.regenerate (v :> IVault) |> ignore
     let idx = v.Files.["tasks/index.md"]
+    // Frontmatter must serialize (regression: a private IndexMeta produced an empty `{}`).
+    Assert.Contains("type: Index", idx)
+    Assert.Contains("title: Task Index", idx)
     Assert.Contains("[[tasks/pending/high]]", idx)
     Assert.Contains("[[tasks/pending/low]]", idx)
     Assert.True(idx.IndexOf("tasks/pending/high") < idx.IndexOf("tasks/pending/low"))
