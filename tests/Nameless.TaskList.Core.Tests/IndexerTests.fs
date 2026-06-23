@@ -38,3 +38,37 @@ let ``regenerate counts items and skips malformed files`` () =
     Assert.Equal(1, s.Topics)
     Assert.Equal(1, s.Channels)
     Assert.Equal(1, s.Skipped)
+
+let private seedRest () =
+    let v = FakeVault()
+    v.Seed("events/2026/06/early.md", "---\ntype: Event\ntitle: Early\nwhen: 2026-06-01T09:00:00+02:00\ncontext:\n  - family\n---\nb")
+    v.Seed("events/2026/07/late.md", "---\ntype: Event\ntitle: Late\nwhen: 2026-07-01T09:00:00+02:00\ncontext:\n  - family\n---\nb")
+    v.Seed("commitments/fees.md", "---\ntype: Commitment\ntitle: Fees\nstatus: unresolved\npriority: high\ndue: 2026-07-01\ntask_assigned: ''\n---\nb")
+    v.Seed("notes/allergy.md", "---\ntype: Note\ntitle: Allergy\ncontext:\n  - medical\ntags:\n  - allergy\n---\nb")
+    v.Seed("people/medical/dr-naidoo.md", "---\ntype: Person\ntitle: Dr Naidoo\nrole: Paediatrician\ncontext:\n  - medical\n---\nb")
+    v
+
+[<Fact>]
+let ``regenerate writes events index in chronological order`` () =
+    let v = seedRest ()
+    Indexer.regenerate (v :> IVault) |> ignore
+    let idx = v.Files.["events/index.md"]
+    Assert.True(idx.IndexOf("events/2026/06/early") < idx.IndexOf("events/2026/07/late"))
+
+[<Fact>]
+let ``regenerate flags commitments with no assigned task`` () =
+    let v = seedRest ()
+    Indexer.regenerate (v :> IVault) |> ignore
+    Assert.Contains("[[commitments/fees]]", v.Files.["commitments/index.md"])
+    Assert.Contains("⚑", v.Files.["commitments/index.md"])
+
+[<Fact>]
+let ``regenerate writes notes and people indexes and full counts`` () =
+    let v = seedRest ()
+    let s = Indexer.regenerate (v :> IVault)
+    Assert.Contains("[[notes/allergy]]", v.Files.["notes/index.md"])
+    Assert.Contains("[[people/medical/dr-naidoo]]", v.Files.["people/index.md"])
+    Assert.Equal(2, s.Events)
+    Assert.Equal(1, s.Commitments)
+    Assert.Equal(1, s.Notes)
+    Assert.Equal(1, s.People)

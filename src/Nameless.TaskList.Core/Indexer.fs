@@ -95,11 +95,81 @@ module Indexer =
         writeIndex vault "channels" "Channel Index" (sb.ToString().TrimEnd())
         List.length items, skipped
 
+    let private whenKey (s: string) =
+        match System.DateTimeOffset.TryParse(s) with
+        | true, dto -> dto.UtcDateTime
+        | _ -> System.DateTime.MaxValue
+
+    let private renderEvents (vault: IVault) : int * int =
+        let items, skipped = loadAll<Event> vault "events"
+        let sb = StringBuilder()
+        for (path, e) in items |> List.sortBy (fun (path, e) -> (whenKey e.When, path)) do
+            sb.AppendLine(sprintf "- %s — %s · %s" (wikilink path) (nz e.When) (joinArr e.Context)) |> ignore
+        writeIndex vault "events" "Event Index" (sb.ToString().TrimEnd())
+        List.length items, skipped
+
+    let private commitmentStatusRank (s: string) =
+        match (nz s).ToLowerInvariant() with "unresolved" -> 0 | "resolved" -> 1 | _ -> 2
+
+    let private renderCommitments (vault: IVault) : int * int =
+        let items, skipped = loadAll<Commitment> vault "commitments"
+        let sb = StringBuilder()
+        items
+        |> List.sortBy (fun (path, c) -> (commitmentStatusRank c.Status, nz c.Due, path))
+        |> List.groupBy (fun (_, c) -> (if nz c.Status = "" then "unknown" else c.Status))
+        |> List.iter (fun (status, rows) ->
+            sb.AppendLine(sprintf "## %s" status) |> ignore
+            for (path, c) in rows do
+                let flag = if System.String.IsNullOrWhiteSpace c.TaskAssigned then " ⚑" else ""
+                sb.AppendLine(sprintf "- %s — due %s · %s%s" (wikilink path) (nz c.Due) (nz c.Priority) flag) |> ignore
+            sb.AppendLine() |> ignore)
+        writeIndex vault "commitments" "Commitment Index" (sb.ToString().TrimEnd())
+        List.length items, skipped
+
+    let private firstContext (c: string array) =
+        if isNull c || c.Length = 0 || System.String.IsNullOrWhiteSpace c.[0] then "uncategorised" else c.[0]
+
+    let private renderNotes (vault: IVault) : int * int =
+        let items, skipped = loadAll<Note> vault "notes"
+        let sb = StringBuilder()
+        items
+        |> List.sortBy (fun (path, n) -> (firstContext n.Context, path))
+        |> List.groupBy (fun (_, n) -> firstContext n.Context)
+        |> List.iter (fun (ctx, rows) ->
+            sb.AppendLine(sprintf "## %s" ctx) |> ignore
+            for (path, n) in rows do
+                sb.AppendLine(sprintf "- %s — %s" (wikilink path) (joinArr n.Tags)) |> ignore
+            sb.AppendLine() |> ignore)
+        writeIndex vault "notes" "Notes Index" (sb.ToString().TrimEnd())
+        List.length items, skipped
+
+    /// Context is the directory segment: people/{ctx}/{slug}.md
+    let private peopleDirContext (path: string) =
+        let parts = path.Split('/')
+        if parts.Length >= 3 then parts.[1] else "uncategorised"
+
+    let private renderPeople (vault: IVault) : int * int =
+        let items, skipped = loadAll<Person> vault "people"
+        let sb = StringBuilder()
+        items
+        |> List.sortBy (fun (path, _) -> (peopleDirContext path, path))
+        |> List.groupBy (fun (path, _) -> peopleDirContext path)
+        |> List.iter (fun (ctx, rows) ->
+            sb.AppendLine(sprintf "## %s" ctx) |> ignore
+            for (path, p) in rows do
+                sb.AppendLine(sprintf "- %s — %s" (wikilink path) (nz p.Role)) |> ignore
+            sb.AppendLine() |> ignore)
+        writeIndex vault "people" "People Index" (sb.ToString().TrimEnd())
+        List.length items, skipped
+
     let regenerate (vault: IVault) : IndexSummary =
         let tCount, tSkip = renderTasks vault
         let topCount, topSkip = renderTopics vault
+        let evCount, evSkip = renderEvents vault
+        let cmCount, cmSkip = renderCommitments vault
+        let nCount, nSkip = renderNotes vault
+        let pCount, pSkip = renderPeople vault
         let chCount, chSkip = renderChannels vault
-        // events/commitments/notes/people renderers are added in the next task.
-        { Tasks = tCount; Topics = topCount; Events = 0; Commitments = 0
-          Notes = 0; People = 0; Channels = chCount
-          Skipped = tSkip + topSkip + chSkip }
+        { Tasks = tCount; Topics = topCount; Events = evCount; Commitments = cmCount
+          Notes = nCount; People = pCount; Channels = chCount
+          Skipped = tSkip + topSkip + evSkip + cmSkip + nSkip + pSkip + chSkip }
