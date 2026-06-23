@@ -172,7 +172,10 @@ module Pipeline =
                             match parsed.FrontMatter with
                             | Some fm ->
                                 let t = Frontmatter.deserialize<Task> fm
-                                if not (System.String.IsNullOrWhiteSpace t.Title) then { Record = t; Body = parsed.Content }
+                                if not (System.String.IsNullOrWhiteSpace t.Title) then
+                                    // The pipeline owns identity + linkage; the model often omits them.
+                                    { Record = { t with Type = "Task"; Topic = topicPath; SourceMessage = messagePath }
+                                      Body = parsed.Content }
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
@@ -210,7 +213,8 @@ module Pipeline =
                             match parsed.FrontMatter with
                             | Some fm ->
                                 let e = Frontmatter.deserialize<Event> fm
-                                if not (System.String.IsNullOrWhiteSpace e.Title) then ensureDated e parsed.Content
+                                if not (System.String.IsNullOrWhiteSpace e.Title) then
+                                    ensureDated { e with Type = "Event"; Topic = topicPath; TasksLinked = Array.ofList taskPaths } parsed.Content
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
@@ -237,7 +241,9 @@ module Pipeline =
                             match parsed.FrontMatter with
                             | Some fm ->
                                 let c = Frontmatter.deserialize<Commitment> fm
-                                if not (System.String.IsNullOrWhiteSpace c.Title) then { Record = c; Body = parsed.Content }
+                                if not (System.String.IsNullOrWhiteSpace c.Title) then
+                                    { Record = { c with Type = "Commitment"; Topic = topicPath; SourceMessage = messagePath }
+                                      Body = parsed.Content }
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
@@ -266,7 +272,8 @@ module Pipeline =
                             match parsed.FrontMatter with
                             | Some fm ->
                                 let n = Frontmatter.deserialize<Note> fm
-                                if not (System.String.IsNullOrWhiteSpace n.Title) then { Record = n; Body = parsed.Content }
+                                if not (System.String.IsNullOrWhiteSpace n.Title) then
+                                    { Record = { n with Type = "Note"; Source = messagePath }; Body = parsed.Content }
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
@@ -295,7 +302,7 @@ module Pipeline =
                             match parsed.FrontMatter with
                             | Some fm ->
                                 let p = Frontmatter.deserialize<Person> fm
-                                if not (System.String.IsNullOrWhiteSpace p.Title) then p, parsed.Content
+                                if not (System.String.IsNullOrWhiteSpace p.Title) then { p with Type = "Person" }, parsed.Content
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->

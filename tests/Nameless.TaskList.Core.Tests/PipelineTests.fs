@@ -232,3 +232,21 @@ let ``existing channel increments count, dedupes topic, and preserves body`` () 
     // topic appears exactly once (deduped)
     let occurrences = (ch.Split("topics/active/family-chat.md").Length - 1)
     Assert.Equal(1, occurrences)
+
+[<Fact>]
+let ``accepted entity reply backfills type and pipeline-owned linkage`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"do the thing","action_required":true,"urgency":"high","people_mentioned":[],"entities":{"tasks":["Do the thing"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"My topic"}"""
+    // Model reply OMITS type, topic, source_message — as gemma did on the live run.
+    let taskFile = Responses.final "---\ntitle: Do the thing\nstatus: pending\npriority: high\ncontext:\n  - family\n---\nbody"
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, tasks) ->
+        let content = vault.Files.[List.head tasks]
+        Assert.Contains("type: Task", content)        // pipeline owns the type tag
+        Assert.Contains(topic, content)               // topic path backfilled
+        Assert.Contains("messages/", content)         // source_message backfilled
+    | other -> failwithf "expected Processed, got %A" other
