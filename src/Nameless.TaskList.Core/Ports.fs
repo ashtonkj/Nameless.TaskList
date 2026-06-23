@@ -8,6 +8,7 @@ open Nameless.TaskList.Core.Conversation
 type IMessageSource =
     abstract member GetMessage : id: string * chatJid: string -> ChatMessage option
     abstract member GetRecent : chatJid: string * before: DateTime * excludingId: string -> ChatMessage list
+    abstract member GetMessagesSince : chatJid: string option * since: System.DateTime -> ChatMessage list
 
 /// Reads and writes markdown files relative to a vault root. Never deletes.
 type IVault =
