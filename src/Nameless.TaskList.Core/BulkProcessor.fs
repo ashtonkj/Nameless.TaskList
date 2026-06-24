@@ -5,37 +5,59 @@ open Nameless.TaskList.Core.Pipeline
 
 module BulkProcessor =
 
-    // Public (returned to the HTTP layer): a private record would serialize to `{}`.
-    type BulkProgress =
-        { Total: int
+    /// Durable record for a bulk run: identity + params + live progress + status.
+    /// Public + CLIMutable so System.Text.Json round-trips it both ways (a private
+    /// record serializes to `{}`).
+    [<CLIMutable>]
+    type BulkJob =
+        { JobId: string
+          Since: System.DateTime
+          ChatJid: string          // "" = all chats
+          StartedAt: System.DateTime
+          Status: string           // running | done | cancelled | interrupted | error
+          Total: int
           Processed: int
           Noise: int
           Skipped: int
           Errors: int
-          Done: bool
           Error: string }
 
-    /// True if any job in the set has not finished.
-    let isRunning (progresses: BulkProgress seq) : bool =
-        progresses |> Seq.exists (fun p -> not p.Done)
+    /// True if any job is still running.
+    let isRunning (jobs: BulkJob seq) : bool =
+        jobs |> Seq.exists (fun j -> j.Status = "running")
 
-    /// Re-run `processOne` over every message since `since` (ascending), tallying outcomes
-    /// and reporting progress after each. A per-message exception or LlmError/NotFound is
-    /// counted as an error and does not abort the run.
+    /// Retain every running job plus the most-recent `keep` non-running jobs (by StartedAt).
+    let prune (keep: int) (jobs: BulkJob list) : BulkJob list =
+        let running, finished = jobs |> List.partition (fun j -> j.Status = "running")
+        let keptFinished =
+            finished
+            |> List.sortByDescending (fun j -> j.StartedAt)
+            |> List.truncate (max 0 keep)
+        running @ keptFinished
+
+    /// Re-run `processOne` over every message since `job.Since` (ascending), tallying
+    /// outcomes and reporting progress after each. A per-message exception or
+    /// LlmError/NotFound is counted as an error and does not abort the run. The loop
+    /// stops between messages when `token` is cancelled, finishing with status
+    /// "cancelled"; otherwise it finishes "done".
     let runSince (messages: IMessageSource) (processOne: string -> string -> PipelineResult)
-                 (since: System.DateTime) (chatJid: string option) (onProgress: BulkProgress -> unit) : BulkProgress =
-        let msgs = messages.GetMessagesSince(chatJid, since)
-        let mutable p =
-            { Total = List.length msgs; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Done = false; Error = "" }
-        for m in msgs do
+                 (job: BulkJob) (token: System.Threading.CancellationToken)
+                 (onProgress: BulkJob -> unit) : BulkJob =
+        let chatJid = if System.String.IsNullOrWhiteSpace job.ChatJid then None else Some job.ChatJid
+        let msgs = messages.GetMessagesSince(chatJid, job.Since)
+        let mutable j = { job with Total = List.length msgs; Status = "running" }
+        let mutable rest = msgs
+        while not (List.isEmpty rest) && not token.IsCancellationRequested do
+            let m = List.head rest
+            rest <- List.tail rest
             (try
                 match processOne m.Id m.ChatJid with
-                | Processed _ -> p <- { p with Processed = p.Processed + 1 }
-                | ProcessedNoise -> p <- { p with Noise = p.Noise + 1 }
-                | Skipped -> p <- { p with Skipped = p.Skipped + 1 }
-                | LlmError _ | NotFound -> p <- { p with Errors = p.Errors + 1 }
-             with _ -> p <- { p with Errors = p.Errors + 1 })
-            onProgress p
-        let final = { p with Done = true }
+                | Processed _ -> j <- { j with Processed = j.Processed + 1 }
+                | ProcessedNoise -> j <- { j with Noise = j.Noise + 1 }
+                | Skipped -> j <- { j with Skipped = j.Skipped + 1 }
+                | LlmError _ | NotFound -> j <- { j with Errors = j.Errors + 1 }
+             with _ -> j <- { j with Errors = j.Errors + 1 })
+            onProgress j
+        let final = { j with Status = (if List.isEmpty rest then "done" else "cancelled") }
         onProgress final
         final

@@ -37,7 +37,7 @@ module BulkJobs =
     open Nameless.TaskList.Core.Pipeline
     open Nameless.TaskList.Core.BulkProcessor
 
-    let private jobs = ConcurrentDictionary<string, BulkProgress>()
+    let private jobs = ConcurrentDictionary<string, BulkJob>()
     let private gate = obj ()
 
     /// Start a background bulk run, unless one is already running. Returns the new job id.
@@ -48,17 +48,21 @@ module BulkJobs =
                 if isRunning jobs.Values then None
                 else
                     let jobId = System.Guid.NewGuid().ToString("N")
-                    jobs.[jobId] <- { Total = 0; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Done = false; Error = "" }
-                    Some jobId)
+                    let job =
+                        { JobId = jobId; Since = since; ChatJid = defaultArg chatJid ""
+                          StartedAt = System.DateTime.UtcNow; Status = "running"
+                          Total = 0; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Error = "" }
+                    jobs.[jobId] <- job
+                    Some job)
         match started with
         | None -> Error "a bulk job is already running"
-        | Some jobId ->
+        | Some job ->
             System.Threading.Tasks.Task.Run(fun () ->
-                try runSince messages processOne since chatJid (fun p -> jobs.[jobId] <- p) |> ignore
-                with ex -> jobs.[jobId] <- { jobs.[jobId] with Done = true; Error = ex.Message }) |> ignore
-            Ok jobId
+                try runSince messages processOne job System.Threading.CancellationToken.None (fun p -> jobs.[job.JobId] <- p) |> ignore
+                with ex -> jobs.[job.JobId] <- { jobs.[job.JobId] with Status = "error"; Error = ex.Message }) |> ignore
+            Ok job.JobId
 
-    let get (jobId: string) : BulkProgress option =
+    let get (jobId: string) : BulkJob option =
         match jobs.TryGetValue jobId with
         | true, p -> Some p
         | _ -> None
@@ -69,7 +73,7 @@ module BulkHandler =
         | Ok jobId -> Results.Json({| jobId = jobId |}, statusCode = 202)
         | Error msg -> Results.Json({| error = msg |}, statusCode = 409)
 
-    let progressToHttp (p: Nameless.TaskList.Core.BulkProcessor.BulkProgress option) : IResult =
+    let progressToHttp (p: Nameless.TaskList.Core.BulkProcessor.BulkJob option) : IResult =
         match p with
         | Some prog -> Results.Ok(box prog)
         | None -> Results.NotFound()

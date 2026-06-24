@@ -69,8 +69,10 @@ let ``bulk start Error maps to 409`` () =
 
 [<Fact>]
 let ``bulk progress Some maps to 200 and None to 404`` () =
-    let p : Nameless.TaskList.Core.BulkProcessor.BulkProgress =
-        { Total = 3; Processed = 2; Noise = 0; Skipped = 1; Errors = 0; Done = true; Error = "" }
+    let p : Nameless.TaskList.Core.BulkProcessor.BulkJob =
+        { JobId = "j1"; Since = System.DateTime(2026, 6, 1); ChatJid = ""
+          StartedAt = System.DateTime(2026, 6, 1); Status = "done"
+          Total = 3; Processed = 2; Noise = 0; Skipped = 1; Errors = 0; Error = "" }
     Assert.Equal(200, statusOfResult (BulkHandler.progressToHttp (Some p)))
     Assert.Equal(404, statusOfResult (BulkHandler.progressToHttp None))
 
@@ -91,17 +93,13 @@ let ``bulk job background failure is caught and stored`` () =
         | Ok id -> id
         | Error e -> failwith e
 
-    // Poll for Done, bounded to ~1 second (50 iterations * 20ms).
     let mutable progress = None
-    for i = 1 to 50 do
+    for _ = 1 to 50 do
         System.Threading.Thread.Sleep(20)
         progress <- BulkJobs.get jobId
-        match progress with
-        | Some p when p.Done -> ()
-        | _ -> ()
 
     let final = progress
     Assert.True(Option.isSome final, "Expected to find the job after polling")
     let p = Option.get final
-    Assert.True(p.Done, "Expected job to be done")
+    Assert.Equal("error", p.Status)
     Assert.True((p.Error.Length > 0 && p.Error.Contains("db down")), sprintf "Expected error containing 'db down', got: %s" p.Error)
