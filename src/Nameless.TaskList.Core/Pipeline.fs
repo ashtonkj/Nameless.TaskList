@@ -452,6 +452,7 @@ module Pipeline =
                                     let mergedBody =
                                         Agent.runConversation deps.Chat [] Prompts.noteUpdateSystem
                                             (Prompts.noteUpdateUser existing.Content intent msg.Content)
+                                        |> stripFences
                                     let merged =
                                         { n with
                                             LastVerified = isoTimestamp msg.Timestamp

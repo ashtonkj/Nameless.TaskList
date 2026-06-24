@@ -648,6 +648,25 @@ let ``a note matching an existing note merges into it instead of creating a new 
     | other -> failwithf "expected Processed, got %A" other
 
 [<Fact>]
+let ``merged note body has fences stripped before being written to the file`` () =
+    let vault = FakeVault()
+    vault.Seed("notes/medical-aid-details.md", "---\ntype: Note\ntitle: Medical aid details\ncontext: [medical]\npeople_linked: []\ntags: []\nsource: \"\"\nlast_verified: \"\"\n---\n## Membership\nDiscovery Health, plan Classic.\n")
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"medical aid membership number is 12345","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":["Discovery Health membership number 12345"]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Medical aid number"}"""
+    let noteMatch = Responses.final """{"match":true,"topic_slug":"medical-aid-details","confidence":0.9,"match_reason":"same note","new_topic_title":null}"""
+    // Model wraps the merged body in markdown fences — the pipeline must strip them.
+    let noteMerged = Responses.final "```markdown\n## Membership\nDiscovery Health, plan Classic. Membership number 12345.\n```"
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; noteMatch; noteMerged; topicBody ])
+    let d = noteDeps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let content = vault.Files.["notes/medical-aid-details.md"]
+        Assert.DoesNotContain("```", content)        // fences must not leak into the stored file
+        Assert.Contains("12345", content)            // merged fact must be present
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
 let ``a note with no existing notes creates a new note file`` () =
     let vault = FakeVault()
     let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"record allergy","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":["Ethan is allergic to penicillin"]}}"""
