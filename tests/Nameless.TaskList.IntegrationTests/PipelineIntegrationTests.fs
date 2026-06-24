@@ -26,6 +26,8 @@ let ``end-to-end processMessage against live services writes a message file`` ()
                   Embedder = OllamaEmbedder(http, Config.ollamaUrl, Config.embedModel) :> IEmbedder
                   TopK = 5
                   SimilarityFloor = 0.5
+                  NoteTopK = 5
+                  NoteSimilarityFloor = 0.35
                   Vision = OllamaVision(http, Config.ollamaUrl, Config.visionModel) :> IVision
                   Transcriber =
                     WhisperTranscriber(Config.whisperCommand, Config.whisperModel, Config.whisperLanguage, Config.whisperTimeout)

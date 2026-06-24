@@ -32,7 +32,7 @@ let sampleMessage () : ChatMessage =
 let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = FakeEmbedder(fun _ -> failwith "no embedder configured") :> IEmbedder
-      TopK = 5; SimilarityFloor = 0.5
+      TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
 
@@ -260,7 +260,7 @@ let ``image-only message is described by vision and processed as that text`` () 
     let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy; 3uy |]) :> IMessageSource
     let vision = FakeVision(fun _ -> "INVITE: Ethan's party Saturday 2pm, please RSVP") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -278,7 +278,7 @@ let ``image-only message falls back to noise when vision fails`` () =
     let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy |]) :> IMessageSource
     let vision = FakeVision(fun _ -> failwith "vision down") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     // vision throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
@@ -292,7 +292,7 @@ let ``vision-derived noise preserves the text`` () =
     let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy; 3uy |]) :> IMessageSource
     let vision = FakeVision(fun _ -> "SCREENSHOT: random meme text") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -312,7 +312,7 @@ let ``GetMediaBytes=None falls back to noise`` () =
     let messages = FakeMessages(Some(imageMessage ())) :> IMessageSource
     let vision = FakeVision(fun _ -> failwith "should not be called") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     // GetMediaBytes returns None -> vision is not called -> content stays empty -> classify (scripted noise) -> ProcessedNoise
@@ -332,7 +332,7 @@ let ``voice-note is transcribed and processed as that text`` () =
     let messages = FakeMessages(Some(audioMessage ()), [| 9uy; 8uy; 7uy |]) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> "Please RSVP to Ethan's party on Saturday at 2pm") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -350,7 +350,7 @@ let ``voice-note falls back to noise when transcription fails`` () =
     let messages = FakeMessages(Some(audioMessage ()), [| 1uy; 2uy |]) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> failwith "whisper down") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     // transcription throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
@@ -364,7 +364,7 @@ let ``transcribed noise preserves the text`` () =
     let messages = FakeMessages(Some(audioMessage ()), [| 3uy; 2uy; 1uy |]) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> "just saying hi, talk later") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -384,7 +384,7 @@ let ``audio GetMediaBytes=None falls back to noise`` () =
     let messages = FakeMessages(Some(audioMessage ())) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> failwith "should not be called") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
@@ -394,7 +394,7 @@ let ``audio GetMediaBytes=None falls back to noise`` () =
 let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (topK: int) (floor: float) : PipelineDeps =
     { Messages = FakeMessages(Some(sampleMessage ())) :> IMessageSource
       Vault = vault :> IVault; Chat = chat; Model = "test-model"
-      Embedder = embedder; TopK = topK; SimilarityFloor = floor
+      Embedder = embedder; TopK = topK; SimilarityFloor = floor; NoteTopK = 5; NoteSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
 
@@ -539,7 +539,7 @@ let private personMessage () : ChatMessage =
 
 let private personDeps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-      Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+      Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
 
@@ -618,4 +618,46 @@ let ``two mentions resolving to the same canonical person produce one file with 
         let content = vault.Files.["people/family/sarah-smith.md"]
         Assert.Contains("Mom", content)
         Assert.Contains("Sarah", content)
+    | other -> failwithf "expected Processed, got %A" other
+
+// ── Note match-and-merge tests ──────────────────────────────────────────────
+
+let private noteDeps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
+    { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+      Embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder   // constant vector => cosine 1.0, always shortlisted
+      TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.35
+      Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+
+[<Fact>]
+let ``a note matching an existing note merges into it instead of creating a new file`` () =
+    let vault = FakeVault()
+    vault.Seed("notes/medical-aid-details.md", "---\ntype: Note\ntitle: Medical aid details\ncontext: [medical]\npeople_linked: []\ntags: []\nsource: \"\"\nlast_verified: \"\"\n---\n## Membership\nDiscovery Health, plan Classic.\n")
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"medical aid membership number is 12345","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":["Discovery Health membership number 12345"]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Medical aid number"}"""
+    let noteMatch = Responses.final """{"match":true,"topic_slug":"medical-aid-details","confidence":0.9,"match_reason":"same note","new_topic_title":null}"""
+    let noteMerged = Responses.final "## Membership\nDiscovery Health, plan Classic. Membership number 12345."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; noteMatch; noteMerged; topicBody ])
+    let d = noteDeps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let noteFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("notes/")) |> List.ofSeq
+        Assert.Equal<string list>([ "notes/medical-aid-details.md" ], noteFiles)   // no new note file
+        Assert.Contains("12345", vault.Files.["notes/medical-aid-details.md"])     // merged content
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``a note with no existing notes creates a new note file`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"record allergy","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":["Ethan is allergic to penicillin"]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Allergy"}"""
+    let noteFile = Responses.final "---\ntype: Note\ntitle: Ethan penicillin allergy\ncontext: [medical]\ntags: [allergy]\n---\nEthan is allergic to penicillin."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    // Empty notes dir => no shortlist => no noteMatch call; just noteCreate.
+    let chat = FakeChatClient([ classify; topicMatch; noteFile; topicBody ])
+    let d = noteDeps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        Assert.True(vault.Files.ContainsKey("notes/ethan-penicillin-allergy.md"))
     | other -> failwithf "expected Processed, got %A" other

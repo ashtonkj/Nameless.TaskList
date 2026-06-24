@@ -50,7 +50,7 @@ For each message, respond ONLY with a JSON object in this exact format:
     "tasks": ["brief description of any tasks implied"],
     "events": ["brief description of any events mentioned with dates if present"],
     "commitments": ["brief description of any deadlines or obligations mentioned"],
-    "notes": ["any factual information worth storing"]
+    "notes": ["only DURABLE reference facts worth keeping long-term and across conversations — account/policy/membership numbers, addresses, contact details, medical records, standing preferences. Do NOT create notes for per-message observations, status updates, or anything specific to a single ongoing conversation; those belong to the topic. Empty array if none."]
   }
 }
 
@@ -131,13 +131,14 @@ Rules:
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
     let noteCreateSystem = """You are creating a Note entry for a personal knowledge base.
-A note captures a fact or piece of reference information worth keeping.
+A Note is a DURABLE, evolving reference document for facts that stay useful across many conversations
+(e.g. account numbers, contact details, medical records, standing preferences) — not a per-message log.
 
 Rules:
-- title: short noun phrase naming the fact
-- context: array — choose from [family, medical, school, finance, professional, personal-kb]
-- tags: array of short lowercase tags (use [] if none)
-- Body: 1–3 sentences capturing the fact, including any specifics (numbers, names, dates).
+- title: short noun phrase naming the reference subject (e.g. "Medical aid details").
+- context: array — choose from [family, medical, school, finance, professional, personal-kb].
+- tags: array of short lowercase tags (use [] if none).
+- Body: organise the fact under a short markdown section heading; include specifics (numbers, names, dates).
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
@@ -161,6 +162,37 @@ Rules:
   End with: "⚠ Stub — details to be completed."
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
+    let noteMatchSystem = """You are a knowledge base assistant. Decide whether a new durable fact
+belongs to an existing reference note, or whether it is a new note.
+
+You are given the new note's intent and a list of candidate notes (slug, title, summary).
+Respond ONLY with a JSON object:
+
+{
+  "match": true/false,
+  "topic_slug": "slug of the matched note, or null if no match",
+  "confidence": 0.0,
+  "match_reason": "brief explanation",
+  "new_topic_title": "if match is false, a concise title for the new note, else null"
+}
+
+Rules:
+- Match only if the new fact is about the same subject as an existing note (e.g. another detail of the same account, person, or record).
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object."""
+
+    let noteUpdateSystem = """You are updating a durable reference note in a personal knowledge base.
+You are given the current note body and a new fact to incorporate.
+
+Rewrite the note body to fold in the new fact. Keep it concise and organised under markdown section
+headings. Preserve existing facts; correct them only if the new information supersedes them.
+
+Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
+
+    let noteUpdateUser (existingBody: string) (intent: string) (raw: string) : string =
+        sprintf "Current note body:\n%s\n\nNew fact (intent):\n%s\n\nSource message raw text:\n%s"
+            existingBody intent raw
 
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.

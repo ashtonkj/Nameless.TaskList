@@ -13,6 +13,8 @@ module Pipeline =
           Embedder: IEmbedder
           TopK: int
           SimilarityFloor: float
+          NoteTopK: int
+          NoteSimilarityFloor: float
           Vision: IVision
           Transcriber: ITranscriber }
 
@@ -375,33 +377,94 @@ module Pipeline =
             let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments)
             ignore commitmentPaths
 
-            // --- Step: create note files ---
-            let noteSpec : EntitySpec<Note> =
-                { Prompt = Prompts.noteCreateSystem
-                  BuildUser =
-                    (fun intent ->
-                        sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
-                            intent msg.Content (String.concat ", " classification.Contexts) messagePath)
-                  Interpret =
-                    (fun stripped intent ->
-                        try
-                            let parsed = MarkdownFile.FromString stripped
-                            match parsed.FrontMatter with
-                            | Some fm ->
-                                let n = Frontmatter.deserialize<Note> fm
-                                if not (System.String.IsNullOrWhiteSpace n.Title) then
-                                    { Record = { n with Type = "Note"; Source = messagePath }; Body = parsed.Content }
-                                else raise (System.Exception("empty title"))
-                            | None -> raise (System.Exception("no frontmatter"))
-                        with _ ->
-                            let fb : Note =
-                                { Type = "Note"; Title = intent; Context = classification.Contexts
-                                  PeopleLinked = classification.PeopleMentioned; Tags = [||]
-                                  Source = messagePath; LastVerified = "" }
-                            { Record = fb; Body = intent })
-                  BasePath = (fun n -> Naming.notePath n.Title) }
+            // --- Step: notes (durable reference only) — match an existing note and merge, else create ---
+            let interpretNote (stripped: string) (intent: string) : Note * string =
+                try
+                    let parsed = MarkdownFile.FromString stripped
+                    match parsed.FrontMatter with
+                    | Some fm ->
+                        let n = Frontmatter.deserialize<Note> fm
+                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Source = messagePath }, parsed.Content
+                        else raise (System.Exception("empty title"))
+                    | None -> raise (System.Exception("no frontmatter"))
+                with _ ->
+                    { Type = "Note"; Title = intent; Context = classification.Contexts
+                      PeopleLinked = classification.PeopleMentioned; Tags = [||]
+                      Source = messagePath; LastVerified = "" }, intent
 
-            let notePaths = writeEntities deps noteSpec (List.ofArray classification.Entities.Notes)
+            let createNewNote (intent: string) : string =
+                let raw =
+                    Agent.runConversation deps.Chat [] Prompts.noteCreateSystem
+                        (sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
+                            intent msg.Content (String.concat ", " classification.Contexts) messagePath)
+                let record, body = interpretNote (stripFences raw) intent
+                let text = MarkdownFile.ToString (Frontmatter.serialize record) body
+                let path = freePath deps.Vault (Naming.notePath record.Title)
+                deps.Vault.Write(path, text)
+                path
+
+            let existingNotes =
+                deps.Vault.ListFiles "notes"
+                |> List.choose (fun path ->
+                    try
+                        let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                        match mf.FrontMatter with
+                        | Some fm ->
+                            let n = Frontmatter.deserialize<Note> fm
+                            Some (System.IO.Path.GetFileNameWithoutExtension(path), n.Title, mf.Content.Trim())
+                        | None -> None
+                    with _ -> None)
+
+            let processNote (intent: string) : string =
+                let shortlist =
+                    if List.isEmpty existingNotes then None
+                    else
+                        try
+                            let iv = deps.Embedder.Embed intent
+                            existingNotes
+                            |> List.map (fun (slug, title, summary) ->
+                                slug, title, summary, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + summary)))
+                            |> List.filter (fun (_, _, _, s) -> s >= deps.NoteSimilarityFloor)
+                            |> List.sortByDescending (fun (_, _, _, s) -> s)
+                            |> List.truncate deps.NoteTopK
+                            |> Some
+                        with _ -> None
+                match shortlist with
+                | Some (_ :: _ as candidates) ->
+                    let candidateText =
+                        candidates
+                        |> List.map (fun (slug, title, summary, _) -> sprintf "slug: %s\ntitle: %s\nsummary: %s" slug title summary)
+                        |> String.concat "\n\n"
+                    let payload = sprintf "New note intent: %s\n\nCandidate notes:\n%s" intent candidateText
+                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.noteMatchSystem payload) with
+                    | Error _ -> createNewNote intent
+                    | Ok m ->
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
+                        match m.Match, matched with
+                        | true, Some (slug, _, _, _) ->
+                            let path = sprintf "notes/%s.md" slug
+                            try
+                                let existing = MarkdownFile.FromString (deps.Vault.Read path)
+                                match existing.FrontMatter with
+                                | Some fm ->
+                                    let n = Frontmatter.deserialize<Note> fm
+                                    let mergedBody =
+                                        Agent.runConversation deps.Chat [] Prompts.noteUpdateSystem
+                                            (Prompts.noteUpdateUser existing.Content intent msg.Content)
+                                    let merged =
+                                        { n with
+                                            LastVerified = isoTimestamp msg.Timestamp
+                                            Context = Array.append (if isNull n.Context then [||] else n.Context) classification.Contexts |> Array.distinct
+                                            PeopleLinked = Array.append (if isNull n.PeopleLinked then [||] else n.PeopleLinked) classification.PeopleMentioned |> Array.distinct }
+                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) mergedBody)
+                                    path
+                                | None -> createNewNote intent
+                            with _ -> createNewNote intent
+                        | _ -> createNewNote intent
+                | _ -> createNewNote intent
+
+            let notePaths = classification.Entities.Notes |> Array.toList |> List.map processNote
 
             // --- Step: resolve mentioned people (alias-aware) and create stubs only when genuinely new ---
             let messageCtx =

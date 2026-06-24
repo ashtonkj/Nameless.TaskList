@@ -60,9 +60,13 @@ module Program =
         let buildDeps (messages: IMessageSource) (vault: IVault) (chat: IChatClient)
                       (embedder: IEmbedder) (vision: IVision) (transcriber: ITranscriber) : PipelineDeps =
             let topK = match System.Int32.TryParse(cfg.["TopicMatch:TopK"]) with | true, v -> v | _ -> 5
-            let floor = match System.Double.TryParse(cfg.["TopicMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.5
+            let floor = match System.Double.TryParse(cfg.["TopicMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.35
+            let noteTopK = match System.Int32.TryParse(cfg.["NoteMatch:TopK"]) with | true, v -> v | _ -> 5
+            let noteFloor = match System.Double.TryParse(cfg.["NoteMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.35
             { Messages = messages; Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]
-              Embedder = embedder; TopK = topK; SimilarityFloor = floor; Vision = vision; Transcriber = transcriber }
+              Embedder = embedder; TopK = topK; SimilarityFloor = floor
+              NoteTopK = noteTopK; NoteSimilarityFloor = noteFloor
+              Vision = vision; Transcriber = transcriber }
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, ITranscriber, Microsoft.AspNetCore.Http.IResult>(
             fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) (vision: IVision) (transcriber: ITranscriber) ->
