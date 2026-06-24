@@ -2,7 +2,6 @@ module Nameless.TaskList.Core.Tests.JobStoreTests
 
 open System
 open System.IO
-open Nameless.TaskList.Core.Ports
 open Nameless.TaskList.Core.Adapters
 open Nameless.TaskList.Core.BulkProcessor
 open Xunit

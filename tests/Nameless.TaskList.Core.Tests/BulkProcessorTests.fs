@@ -60,7 +60,7 @@ let ``runSince reports progress once per message`` () =
     let src = FakeSince([ msg "a"; msg "b"; msg "c" ]) :> IMessageSource
     let mutable calls = 0
     runSince src (fun _ _ -> Skipped) (newJob ()) CancellationToken.None (fun _ -> calls <- calls + 1) |> ignore
-    Assert.True(calls >= 3)
+    Assert.Equal(4, calls)
 
 [<Fact>]
 let ``runSince stops early and reports cancelled when the token is already cancelled`` () =

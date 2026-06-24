@@ -45,7 +45,8 @@ module BulkProcessor =
                  (onProgress: BulkJob -> unit) : BulkJob =
         let chatJid = if System.String.IsNullOrWhiteSpace job.ChatJid then None else Some job.ChatJid
         let msgs = messages.GetMessagesSince(chatJid, job.Since)
-        let mutable j = { job with Total = List.length msgs; Status = "running" }
+        let mutable j = { job with Total = List.length msgs; Status = "running"
+                                   Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Error = "" }
         let mutable rest = msgs
         while not (List.isEmpty rest) && not token.IsCancellationRequested do
             let m = List.head rest

@@ -172,6 +172,24 @@ let ``registry resumes an interrupted job from the store`` () =
     Assert.Equal(2, j.Skipped)
 
 [<Fact>]
+let ``registry Resume marks older running jobs interrupted and completes the newest`` () =
+    let older : Nameless.TaskList.Core.BulkProcessor.BulkJob =
+        { JobId = "old1"; Since = System.DateTime(2026, 6, 1); ChatJid = ""
+          StartedAt = System.DateTime(2026, 6, 1, 10, 0, 0); Status = "running"
+          Total = 0; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Error = "" }
+    let newer : Nameless.TaskList.Core.BulkProcessor.BulkJob =
+        { JobId = "new1"; Since = System.DateTime(2026, 6, 1); ChatJid = ""
+          StartedAt = System.DateTime(2026, 6, 1, 12, 0, 0); Status = "running"
+          Total = 0; Processed = 0; Noise = 0; Skipped = 0; Errors = 0; Error = "" }
+    let src = SinceSource([ testMsg "a"; testMsg "b" ]) :> IMessageSource
+    let reg = BulkJobRegistry(FakeJobStore([ older; newer ]), 20)
+    reg.Resume src (fun _ _ -> Skipped)
+    // The older job (lower StartedAt) should be marked interrupted
+    Assert.True(pollUntil (fun () -> match reg.Get "old1" with Some j -> j.Status = "interrupted" | None -> false))
+    // The newer job (highest StartedAt) should reach a terminal status (done)
+    Assert.True(pollUntil (fun () -> match reg.Get "new1" with Some j -> j.Status = "done" | None -> false))
+
+[<Fact>]
 let ``bulk cancel outcomes map to 200/404/409`` () =
     Assert.Equal(200, statusOfResult (BulkHandler.cancelToHttp Cancelled))
     Assert.Equal(404, statusOfResult (BulkHandler.cancelToHttp UnknownJob))

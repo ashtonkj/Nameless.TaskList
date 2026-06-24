@@ -114,8 +114,9 @@ module BulkJobs =
             match interrupted with
             | [] -> ()
             | latest :: rest ->
-                for j in rest do liveJobs.[j.JobId] <- { j with Status = "interrupted" }
-                persist ()
+                lock regGate (fun () ->
+                    for j in rest do liveJobs.[j.JobId] <- { j with Status = "interrupted" }
+                    persist ())
                 runJob messages processOne latest
 
 module BulkHandler =
