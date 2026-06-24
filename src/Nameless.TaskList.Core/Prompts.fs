@@ -62,7 +62,8 @@ A message is noise if it is:
 
 If noise is true, all other fields except noise_reason may be null or empty.
 Do not add explanation outside the JSON object.
-You may call the get_contexts tool to see context definitions before deciding."""
+You may call the get_contexts tool to see context definitions before deciding.
+You may be given recent conversation history for context. Use it only to disambiguate the meaning of the current message; classify and extract from the "Message to classify" alone, not the history."""
 
     let topicMatchSystem = """You are a knowledge base assistant. Your job is to decide whether an incoming message
 belongs to an existing open topic, or whether it represents a new topic.
@@ -166,7 +167,8 @@ Rules:
 - Add newly resolved items to "## Resolved"
 - Do not reference the message itself — just update the facts
 
-Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
+Respond ONLY with the updated markdown body (no frontmatter, no explanation).
+You may be given recent conversation history for context. Use it to interpret the new message; do not summarise the history itself into the topic body."""
 
     /// Pull the first JSON object out of a possibly-chatty / fenced model reply.
     let private extractJson (raw: string) : string =
@@ -192,6 +194,34 @@ Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
 
     let parseClassification (raw: string) : Result<Classification, string> = tryParse<Classification> raw
     let parseTopicMatch (raw: string) : Result<TopicMatch, string> = tryParse<TopicMatch> raw
+
+    /// Render recent prior messages — as returned by GetRecent (newest-first) — into an
+    /// oldest→newest transcript for use as conversation context. Media-only turns (empty
+    /// content) render with a [type] placeholder so the model knows a non-text turn occurred.
+    let renderHistory (recent: ChatMessage list) : string =
+        recent
+        |> List.rev
+        |> List.map (fun m ->
+            let body =
+                if not (System.String.IsNullOrWhiteSpace m.Content) then m.Content.Trim()
+                else
+                    match (if isNull m.MediaType then "" else m.MediaType).ToLowerInvariant() with
+                    | "image"    -> "[image]"
+                    | "audio"    -> "[voice note]"
+                    | "video"    -> "[video]"
+                    | "document" -> "[document]"
+                    | _          -> "[no text]"
+            sprintf "%s: %s" m.SenderName body)
+        |> String.concat "\n"
+
+    /// Build the classify user-message: the current message, optionally preceded by a
+    /// conversation-history block. Empty history passes the content through unchanged so
+    /// no-history processing (and existing tests) is byte-for-byte identical to before.
+    let classifyUser (history: string) (content: string) : string =
+        if System.String.IsNullOrWhiteSpace history then content
+        else
+            sprintf "Recent conversation (oldest to newest, for context only):\n%s\n\n---\nMessage to classify:\n%s"
+                history content
 
     let dailyBriefingSystem = """You are generating a daily briefing for a personal knowledge base.
 Be concise. The owner is a busy professional — surface only what matters today and this week.
