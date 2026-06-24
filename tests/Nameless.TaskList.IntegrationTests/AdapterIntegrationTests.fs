@@ -18,50 +18,50 @@ let ``FileSystemVault round-trips write, read, exists and list`` () =
         Assert.Equal("hello body", vault.Read "topics/active/sample.md")
         Assert.Contains("topics/active/sample.md", vault.ListFilesRecursive "topics"))
 
-[<Fact>]
+[<SkippableFact>]
 let ``Postgres returns at least one well-formed message`` () =
-    Assert.SkipUnless(ServiceProbes.postgres.Value, "Postgres not reachable")
+    Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not reachable")
     let rows = (Helpers.messages ()).GetMessagesSince(None, DateTime.MinValue)
     Assert.NotEmpty(rows)
     let first = List.head rows
     Assert.False(String.IsNullOrWhiteSpace first.Id)
     Assert.False(String.IsNullOrWhiteSpace first.ChatJid)
 
-[<Fact>]
+[<SkippableFact>]
 let ``Ollama chat returns a non-empty reply`` () =
-    Assert.SkipUnless(ServiceProbes.ollama.Value, "Ollama not reachable")
+    Skip.IfNot(ServiceProbes.ollama.Value, "Ollama not reachable")
     use http = new HttpClient()
     let chat = OllamaChatClient(http, Config.ollamaUrl, Config.chatModel) :> IChatClient
     let reply = Agent.runConversation chat [] "You are a test." "Reply with the single word OK."
     Assert.False(String.IsNullOrWhiteSpace reply)
 
-[<Fact>]
+[<SkippableFact>]
 let ``Ollama embed returns a 768-dim finite vector`` () =
-    Assert.SkipUnless(ServiceProbes.ollama.Value, "Ollama not reachable")
+    Skip.IfNot(ServiceProbes.ollama.Value, "Ollama not reachable")
     use http = new HttpClient()
     let embedder = OllamaEmbedder(http, Config.ollamaUrl, Config.embedModel) :> IEmbedder
     let v = embedder.Embed "integration test sentence"
     Assert.Equal(768, v.Length)
     Assert.All(v, fun x -> Assert.True(Double.IsFinite x))
 
-[<Fact>]
+[<SkippableFact>]
 let ``Ollama vision describes a real image message`` () =
-    Assert.SkipUnless(ServiceProbes.postgres.Value, "Postgres not reachable")
-    Assert.SkipUnless(ServiceProbes.ollama.Value, "Ollama not reachable")
+    Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not reachable")
+    Skip.IfNot(ServiceProbes.ollama.Value, "Ollama not reachable")
     match Helpers.firstWithMedia "image" with
-    | None -> Assert.Skip("no image message with stored bytes")
+    | None -> Skip.If(true, "no image message with stored bytes")
     | Some(_, bytes) ->
         use http = new HttpClient()
         let vision = OllamaVision(http, Config.ollamaUrl, Config.visionModel) :> IVision
         let text = vision.Describe bytes
         Assert.False(String.IsNullOrWhiteSpace text)
 
-[<Fact>]
+[<SkippableFact>]
 let ``Whisper transcribes a real audio message`` () =
-    Assert.SkipUnless(ServiceProbes.postgres.Value, "Postgres not reachable")
-    Assert.SkipUnless(ServiceProbes.whisper.Value, "whisper/ffmpeg not available")
+    Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not reachable")
+    Skip.IfNot(ServiceProbes.whisper.Value, "whisper/ffmpeg not available")
     match Helpers.firstWithMedia "audio" with
-    | None -> Assert.Skip("no audio message with stored bytes")
+    | None -> Skip.If(true, "no audio message with stored bytes")
     | Some(_, bytes) ->
         let t =
             WhisperTranscriber(Config.whisperCommand, Config.whisperModel, Config.whisperLanguage, Config.whisperTimeout)

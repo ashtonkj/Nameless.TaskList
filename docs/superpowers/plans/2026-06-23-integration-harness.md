@@ -4,9 +4,9 @@
 
 **Goal:** An opt-in test project that drives the real adapters (Postgres read-only, Ollama chat/embed/vision, Whisper CLI, filesystem vault) plus one end-to-end `processMessage`, gated so the default `dotnet test` is unchanged and each test skips when its service is absent.
 
-**Architecture:** A new `tests/Nameless.TaskList.IntegrationTests` project referencing only `Nameless.TaskList.Core`. It is in the solution (so `dotnet build` compiles it — catching adapter drift) but excluded from default `dotnet test` via a conditional `IsTestProject` flag; it runs on demand with `-p:Integration=true`. Per-service availability is probed at runtime and gated with xUnit 2.9.2's built-in `Assert.SkipUnless`/`Assert.Skip`. Config is read from the host's `appsettings*.json` with `System.Text.Json`. Vault writes go to temp dirs; Postgres is read-only.
+**Architecture:** A new `tests/Nameless.TaskList.IntegrationTests` project referencing only `Nameless.TaskList.Core`. It is in the solution (so `dotnet build` compiles it — catching adapter drift) but excluded from default `dotnet test` via a conditional `IsTestProject` flag; it runs on demand with `-p:Integration=true`. Per-service availability is probed at runtime and gated with `Xunit.SkippableFact` (`[<SkippableFact>]` + `Skip.IfNot`/`Skip.If`). Config is read from the host's `appsettings*.json` with `System.Text.Json`. Vault writes go to temp dirs; Postgres is read-only.
 
-**Tech Stack:** F# / .NET 10, xUnit 2.9.2 (built-in dynamic skip — no third-party skip package), the existing Core adapters, Npgsql (transitive via Core), `System.Net.Http` + `System.Text.Json` (BCL).
+**Tech Stack:** F# / .NET 10, xUnit 2.9.2 + `Xunit.SkippableFact` 1.5.23 (for per-test dynamic skipping), the existing Core adapters, Npgsql (transitive via Core), `System.Net.Http` + `System.Text.Json` (BCL).
 
 ## Global Constraints
 
@@ -74,6 +74,7 @@ Create `tests/Nameless.TaskList.IntegrationTests/Nameless.TaskList.IntegrationTe
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
         <PackageReference Include="xunit" Version="2.9.2" />
         <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+        <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
     </ItemGroup>
 
     <ItemGroup>
@@ -290,50 +291,50 @@ git commit -m "test: scaffold opt-in integration harness (project, probes, vault
 Append to `tests/Nameless.TaskList.IntegrationTests/AdapterIntegrationTests.fs`. (Add `open Nameless.TaskList.Core` and `open System.Net.Http` at the top of the file, after the existing `open`s.)
 
 ```fsharp
-[<Fact>]
+[<SkippableFact>]
 let ``Postgres returns at least one well-formed message`` () =
-    Assert.SkipUnless(ServiceProbes.postgres.Value, "Postgres not reachable")
+    Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not reachable")
     let rows = (Helpers.messages ()).GetMessagesSince(None, DateTime.MinValue)
     Assert.NotEmpty(rows)
     let first = List.head rows
     Assert.False(String.IsNullOrWhiteSpace first.Id)
     Assert.False(String.IsNullOrWhiteSpace first.ChatJid)
 
-[<Fact>]
+[<SkippableFact>]
 let ``Ollama chat returns a non-empty reply`` () =
-    Assert.SkipUnless(ServiceProbes.ollama.Value, "Ollama not reachable")
+    Skip.IfNot(ServiceProbes.ollama.Value, "Ollama not reachable")
     use http = new HttpClient()
     let chat = OllamaChatClient(http, Config.ollamaUrl, Config.chatModel) :> IChatClient
     let reply = Agent.runConversation chat [] "You are a test." "Reply with the single word OK."
     Assert.False(String.IsNullOrWhiteSpace reply)
 
-[<Fact>]
+[<SkippableFact>]
 let ``Ollama embed returns a 768-dim finite vector`` () =
-    Assert.SkipUnless(ServiceProbes.ollama.Value, "Ollama not reachable")
+    Skip.IfNot(ServiceProbes.ollama.Value, "Ollama not reachable")
     use http = new HttpClient()
     let embedder = OllamaEmbedder(http, Config.ollamaUrl, Config.embedModel) :> IEmbedder
     let v = embedder.Embed "integration test sentence"
     Assert.Equal(768, v.Length)
     Assert.All(v, fun x -> Assert.True(Double.IsFinite x))
 
-[<Fact>]
+[<SkippableFact>]
 let ``Ollama vision describes a real image message`` () =
-    Assert.SkipUnless(ServiceProbes.postgres.Value, "Postgres not reachable")
-    Assert.SkipUnless(ServiceProbes.ollama.Value, "Ollama not reachable")
+    Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not reachable")
+    Skip.IfNot(ServiceProbes.ollama.Value, "Ollama not reachable")
     match Helpers.firstWithMedia "image" with
-    | None -> Assert.Skip("no image message with stored bytes")
+    | None -> Skip.If(true, "no image message with stored bytes")
     | Some(_, bytes) ->
         use http = new HttpClient()
         let vision = OllamaVision(http, Config.ollamaUrl, Config.visionModel) :> IVision
         let text = vision.Describe bytes
         Assert.False(String.IsNullOrWhiteSpace text)
 
-[<Fact>]
+[<SkippableFact>]
 let ``Whisper transcribes a real audio message`` () =
-    Assert.SkipUnless(ServiceProbes.postgres.Value, "Postgres not reachable")
-    Assert.SkipUnless(ServiceProbes.whisper.Value, "whisper/ffmpeg not available")
+    Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not reachable")
+    Skip.IfNot(ServiceProbes.whisper.Value, "whisper/ffmpeg not available")
     match Helpers.firstWithMedia "audio" with
-    | None -> Assert.Skip("no audio message with stored bytes")
+    | None -> Skip.If(true, "no audio message with stored bytes")
     | Some(_, bytes) ->
         let t =
             WhisperTranscriber(Config.whisperCommand, Config.whisperModel, Config.whisperLanguage, Config.whisperTimeout)
@@ -387,12 +388,12 @@ open Nameless.TaskList.Core.Adapters
 open Nameless.TaskList.Core.Pipeline
 open Nameless.TaskList.IntegrationTests.Support
 
-[<Fact>]
+[<SkippableFact>]
 let ``end-to-end processMessage against live services writes a message file`` () =
-    Assert.SkipUnless(ServiceProbes.postgres.Value, "Postgres not reachable")
-    Assert.SkipUnless(ServiceProbes.ollama.Value, "Ollama not reachable")
+    Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not reachable")
+    Skip.IfNot(ServiceProbes.ollama.Value, "Ollama not reachable")
     match Helpers.firstMessageWith (fun _ -> true) with
-    | None -> Assert.Skip("no messages in the store")
+    | None -> Skip.If(true, "no messages in the store")
     | Some msg ->
         Helpers.withTempVault (fun root ->
             use http = new HttpClient()
@@ -456,12 +457,12 @@ git commit -m "test: end-to-end processMessage integration test + document opt-i
 - §3.1 project (Core ref, packages, slnx) → Task 1 Steps 1, 5. ✅
 - §3.2 conditional `IsTestProject` exclusion → Task 1 Step 1 + verified in Steps 6-7. ✅
 - §3.3 parallelism off → Task 1 Step 2. ✅
-- §4 `ServiceProbes` (postgres/ollama/whisper, cached via `lazy`) + `Assert.SkipUnless` gating → Task 1 Step 3, used in Tasks 2-3. ✅
+- §4 `ServiceProbes` (postgres/ollama/whisper, cached via `lazy`) + `[<SkippableFact>]`/`Skip.IfNot` gating → Task 1 Step 3, used in Tasks 2-3. ✅
 - §5.1 config from host appsettings via System.Text.Json → Task 1 Step 3 (`Config`). ✅
 - §5.2 safety (Postgres read-only; temp-dir vault; cleanup) → `Helpers.withTempVault` (Task 1) + read-only query usage (Tasks 2-3). ✅
 - §6 tests 1-6 (Postgres, chat, embed-768, vision, whisper, vault) → Task 1 Step 4 (vault) + Task 2. ✅
 - §6 test 7 (end-to-end) → Task 3. ✅
-- §7 determinism/skip/cleanup → `Assert.Skip`/`SkipUnless` + `finally` cleanup throughout. ✅
+- §7 determinism/skip/cleanup → `[<SkippableFact>]`/`Skip.IfNot`/`Skip.If` + `finally` cleanup throughout. ✅
 - §8 files + CLAUDE.md doc → Task 3 Step 3. ✅
 
 **2. Placeholder scan:** The `PipelineIntegrationTests.fs` "placeholder" in Task 1 Step 2 is an intentional, valid empty F# module (so the `.fsproj` compile list resolves before Task 3 fills it), not a content placeholder. Every code step contains complete code; no TBD/"handle errors"/"similar to" left.
