@@ -680,3 +680,32 @@ let ``a note with no existing notes creates a new note file`` () =
     | Processed(_, _) ->
         Assert.True(vault.Files.ContainsKey("notes/ethan-penicillin-allergy.md"))
     | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``two note intents in the same message about the same subject produce exactly one note file`` () =
+    // Regression: the stale existingNotes listing (computed once before the loop) means the second intent
+    // does not see the note created by the first and creates notes/medical-aid-details-2.md instead of
+    // merging into notes/medical-aid-details.md.
+    let vault = FakeVault()
+    // No notes seeded — the vault is empty at the start.
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"Discovery Health medical aid info","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":["Discovery Health membership number 12345","Discovery Health plan is Classic"]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"new","new_topic_title":"Medical aid details"}"""
+    // Note intent 1: vault is empty -> no shortlist -> noteCreate path.
+    let noteCreate1 = Responses.final "---\ntype: Note\ntitle: Medical aid details\ncontext:\n  - medical\ntags: []\n---\nDiscovery Health, membership number 12345."
+    // Note intent 2: after the fix the listing is re-scanned, finding the note just created above,
+    // embedding shortlists it (FakeEmbedder always returns [|1.0; 0.0|]), and noteMatch fires.
+    let noteMatch2 = Responses.final """{"match":true,"topic_slug":"medical-aid-details","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    // noteUpdate merges the second fact into the existing note body.
+    let noteUpdate2 = Responses.final "## Membership\nDiscovery Health, membership number 12345. Plan is Classic."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    // Fixed call sequence: classify, topicMatch, noteCreate1, noteMatch2, noteUpdate2, topicBody.
+    let chat = FakeChatClient([ classify; topicMatch; noteCreate1; noteMatch2; noteUpdate2; topicBody ])
+    let d = noteDeps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let noteFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("notes/")) |> List.ofSeq
+        Assert.Equal(1, noteFiles.Length)   // exactly one note file — no -2.md duplicate
+        Assert.True(vault.Files.ContainsKey("notes/medical-aid-details.md"))
+        Assert.False(vault.Files.ContainsKey("notes/medical-aid-details-2.md"))
+        Assert.Contains("Classic", vault.Files.["notes/medical-aid-details.md"])   // merged content
+    | other -> failwithf "expected Processed, got %A" other

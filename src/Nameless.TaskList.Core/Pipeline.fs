@@ -403,19 +403,20 @@ module Pipeline =
                 deps.Vault.Write(path, text)
                 path
 
-            let existingNotes =
-                deps.Vault.ListFiles "notes"
-                |> List.choose (fun path ->
-                    try
-                        let mf = MarkdownFile.FromString (deps.Vault.Read path)
-                        match mf.FrontMatter with
-                        | Some fm ->
-                            let n = Frontmatter.deserialize<Note> fm
-                            Some (System.IO.Path.GetFileNameWithoutExtension(path), n.Title, mf.Content.Trim())
-                        | None -> None
-                    with _ -> None)
-
             let processNote (intent: string) : string =
+                // Re-scan the vault on every call so a note written by an earlier intent in this same
+                // message is visible when processing the next intent (prevents -2.md duplicates).
+                let existingNotes =
+                    deps.Vault.ListFiles "notes"
+                    |> List.choose (fun path ->
+                        try
+                            let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                            match mf.FrontMatter with
+                            | Some fm ->
+                                let n = Frontmatter.deserialize<Note> fm
+                                Some (System.IO.Path.GetFileNameWithoutExtension(path), n.Title, mf.Content.Trim())
+                            | None -> None
+                        with _ -> None)
                 let shortlist =
                     if List.isEmpty existingNotes then None
                     else
