@@ -315,6 +315,77 @@ let ``GetMediaBytes=None falls back to noise`` () =
     // GetMediaBytes returns None -> vision is not called -> content stays empty -> classify (scripted noise) -> ProcessedNoise
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
+let private audioMessage () : ChatMessage =
+    { sampleMessage () with Content = ""; MediaType = "audio" }
+
+[<Fact>]
+let ``voice-note is transcribed and processed as that text`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"party rsvp request","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":["RSVP to the party"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Birthday party"}"""
+    let taskFile = Responses.final "---\ntype: Task\ntitle: RSVP to the party\nstatus: pending\npriority: medium\ncontext:\n  - family\n---\nrsvp"
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskFile; topicBody ])
+    let messages = FakeMessages(Some(audioMessage ()), [| 9uy; 8uy; 7uy |]) :> IMessageSource
+    let transcriber = FakeTranscriber(fun _ -> "Please RSVP to Ethan's party on Saturday at 2pm") :> ITranscriber
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+              Transcriber = transcriber }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+        Assert.Contains("Voice note (transcribed)", vault.Files.[msgKey])     // body header
+        Assert.Contains("Please RSVP to Ethan's party", vault.Files.[msgKey]) // transcript is the content
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``voice-note falls back to noise when transcription fails`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"empty","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let messages = FakeMessages(Some(audioMessage ()), [| 1uy; 2uy |]) :> IMessageSource
+    let transcriber = FakeTranscriber(fun _ -> failwith "whisper down") :> ITranscriber
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+              Transcriber = transcriber }
+    // transcription throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
+    Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
+
+[<Fact>]
+let ``transcribed noise preserves the text`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"chitchat","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let messages = FakeMessages(Some(audioMessage ()), [| 3uy; 2uy; 1uy |]) :> IMessageSource
+    let transcriber = FakeTranscriber(fun _ -> "just saying hi, talk later") :> ITranscriber
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+              Transcriber = transcriber }
+    match Pipeline.processMessage d "M1" "jid" with
+    | ProcessedNoise ->
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+        let msgContent = vault.Files.[msgKey]
+        Assert.Contains("Voice note (transcribed)", msgContent)  // header preserved
+        Assert.Contains("just saying hi, talk later", msgContent) // transcript preserved
+    | other -> failwithf "expected ProcessedNoise, got %A" other
+
+[<Fact>]
+let ``audio GetMediaBytes=None falls back to noise`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"empty","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    // audio message but NO stored media bytes (None) -> transcriber must not be called
+    let messages = FakeMessages(Some(audioMessage ())) :> IMessageSource
+    let transcriber = FakeTranscriber(fun _ -> failwith "should not be called") :> ITranscriber
+    let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+              Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+              Transcriber = transcriber }
+    Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
+
 // ── Hybrid embedding topic-match tests ─────────────────────────────────────
 
 let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (topK: int) (floor: float) : PipelineDeps =
