@@ -513,3 +513,22 @@ let ``classify call includes recent conversation history`` () =
     let classifyUserMsg = (chat.Received.[0].[1] :?> UserMessage).Content
     Assert.Contains("Are you free for Ethan's party on the 19th?", classifyUserMsg)
     Assert.Contains("Message to classify:", classifyUserMsg)
+
+[<Fact>]
+let ``topic-update call also receives recent conversation history`` () =
+    let vault = FakeVault()
+    let prior =
+        { sampleMessage () with
+            Id = "M0"; SenderName = "Wife"
+            Content = "Are you free for Ethan's party on the 19th?" }
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"confirm party date","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Ethan party"}"""
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; topicBody ])
+    let messages = FakeMessages(Some(sampleMessage ()), recent = [ prior ])
+    let d = deps messages vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    // Third Chat call (index 2) is the topic-update; index 1 is its user message.
+    let topicUpdateUserMsg = (chat.Received.[2].[1] :?> UserMessage).Content
+    Assert.Contains("Are you free for Ethan's party on the 19th?", topicUpdateUserMsg)
+    Assert.Contains("Recent conversation", topicUpdateUserMsg)

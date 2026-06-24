@@ -211,7 +211,8 @@ You may be given recent conversation history for context. Use it to interpret th
                     | "video"    -> "[video]"
                     | "document" -> "[document]"
                     | _          -> "[no text]"
-            sprintf "%s: %s" m.SenderName body)
+            let sender = if isNull m.SenderName then "Unknown" else m.SenderName
+            sprintf "%s: %s" sender body)
         |> String.concat "\n"
 
     /// Build the classify user-message: the current message, optionally preceded by a
@@ -222,6 +223,16 @@ You may be given recent conversation history for context. Use it to interpret th
         else
             sprintf "Recent conversation (oldest to newest, for context only):\n%s\n\n---\nMessage to classify:\n%s"
                 history content
+
+    /// Build the topic-update user-message. With empty history the payload is byte-for-byte
+    /// identical to the pre-history-feature format, so no-history processing is unchanged.
+    let topicUpdateUser (history: string) (existingBody: string) (content: string) (intent: string) : string =
+        if System.String.IsNullOrWhiteSpace history then
+            sprintf "Current topic body:\n%s\n\nNew message raw text:\n%s\n\nExtracted intent:\n%s"
+                existingBody content intent
+        else
+            sprintf "Current topic body:\n%s\n\nRecent conversation (oldest to newest, for context):\n%s\n\nNew message raw text:\n%s\n\nExtracted intent:\n%s"
+                existingBody history content intent
 
     let dailyBriefingSystem = """You are generating a daily briefing for a personal knowledge base.
 Be concise. The owner is a busy professional — surface only what matters today and this week.

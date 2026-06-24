@@ -51,3 +51,22 @@ let ``classifyUser with history wraps content with markers`` () =
     Assert.Contains("Me: newest", payload)
     Assert.Contains("Message to classify:", payload)
     Assert.Contains("yes the 19th works", payload)
+
+[<Fact>]
+let ``topicUpdateUser with empty history omits the Recent conversation heading`` () =
+    let result = Prompts.topicUpdateUser "" "BODY" "MSG" "INTENT"
+    Assert.DoesNotContain("Recent conversation", result)
+    Assert.Equal("Current topic body:\nBODY\n\nNew message raw text:\nMSG\n\nExtracted intent:\nINTENT", result)
+
+[<Fact>]
+let ``topicUpdateUser with history includes the conversation section`` () =
+    let result = Prompts.topicUpdateUser "Wife: hi" "BODY" "MSG" "INTENT"
+    Assert.Contains("Recent conversation (oldest to newest, for context):", result)
+    Assert.Contains("Wife: hi", result)
+    Assert.Contains("BODY", result)
+    Assert.Contains("MSG", result)
+    Assert.Contains("INTENT", result)
+
+[<Fact>]
+let ``renderHistory renders null sender as Unknown`` () =
+    Assert.Equal("Unknown: hello", Prompts.renderHistory [ histMsg null "hello" null ])
