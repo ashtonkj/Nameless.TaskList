@@ -7,11 +7,13 @@ open Nameless.TaskList.Core.Pipeline
 open Nameless.TaskList.Core.Tests.Fakes
 open Xunit
 
-// IMessageSource fake returning a single configured message.
-type FakeMessages(msg: ChatMessage option, ?media: byte array) =
+// IMessageSource fake returning a single configured message, optional media bytes,
+// and an optional recent-history list (newest-first, as the real GetRecent returns).
+type FakeMessages(msg: ChatMessage option, ?media: byte array, ?recent: ChatMessage list) =
+    let recentList = defaultArg recent []
     interface IMessageSource with
         member _.GetMessage(_id, _jid) = msg
-        member _.GetRecent(_jid, _before, _ex) = []
+        member _.GetRecent(_jid, _before, _ex) = recentList
         member _.GetMessagesSince(_chatJid, _since) = []
         member _.GetMediaBytes(_id, _jid) = media
 

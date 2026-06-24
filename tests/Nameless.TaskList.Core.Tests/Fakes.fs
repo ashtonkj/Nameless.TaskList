@@ -19,13 +19,16 @@ type FakeVault() =
             let prefix = relDir.TrimEnd('/') + "/"
             files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
 
-/// Returns scripted responses in order. Records how many times Chat was called.
+/// Returns scripted responses in order. Records how many times Chat was called
+/// and the message array passed to each call (for asserting on prompt payloads).
 type FakeChatClient(scripted: ChatResponse list) =
     let queue = Queue<ChatResponse>(scripted)
     member val Calls = 0 with get, set
+    member val Received = ResizeArray<obj array>() with get
     interface IChatClient with
-        member this.Chat(_messages, _tools) =
+        member this.Chat(messages, _tools) =
             this.Calls <- this.Calls + 1
+            this.Received.Add(messages)
             queue.Dequeue()
 
 /// Test embedder: maps text -> vector via the supplied function (which may throw).
