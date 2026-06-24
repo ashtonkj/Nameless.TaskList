@@ -76,15 +76,7 @@ Each live-service test is marked `[<SkippableFact>]` (from `Xunit.SkippableFact`
 ## 5. Config & safety
 
 ### 5.1 Config
-A `Config` module builds an `IConfigurationRoot` once:
-```
-ConfigurationBuilder()
-  .AddJsonFile(<hostDir>/appsettings.json, optional=true)
-  .AddJsonFile(<hostDir>/appsettings.Development.json, optional=true)
-  .AddEnvironmentVariables()
-  .Build()
-```
-`<hostDir>` is resolved from the test assembly location up to the repo and into `src/Nameless.TaskList` (a helper walks up from `AppContext.BaseDirectory` to the directory containing `Nameless.TaskList.slnx`, then into `src/Nameless.TaskList`). Exposes: `connectionString` (`ConnectionStrings:WhatsApp`, may be null → Postgres skips), `ollamaUrl` (`Ollama:Url`, default `http://localhost:11434`), `chatModel` (`Ollama:Model`), `embedModel` (`Ollama:EmbedModel`, default `nomic-embed-text`), `visionModel` (`Ollama:VisionModel`, default `gemma3:latest`), `whisperCommand`/`whisperModel`/`whisperLanguage`/`whisperTimeout` (`Whisper:*`, same defaults as the host).
+A `Config` module reads the host's `appsettings.json` + `appsettings.Development.json` once, directly with `System.Text.Json` (`JsonDocument`) — no configuration packages. `<hostDir>` is resolved from the test assembly location: a helper walks up from `AppContext.BaseDirectory` to the directory containing `Nameless.TaskList.slnx`, then into `src/Nameless.TaskList`. Dev settings override base for the connection string, with a final `WHATSAPP_CONNSTRING` environment-variable fallback. Exposes: `connectionString` (`ConnectionStrings:WhatsApp`, may be null → Postgres skips), `ollamaUrl` (`Ollama:Url`, default `http://localhost:11434`), `chatModel` (`Ollama:Model`), `embedModel` (`Ollama:EmbedModel`, default `nomic-embed-text`), `visionModel` (`Ollama:VisionModel`, default `gemma3:latest`), `whisperCommand`/`whisperModel`/`whisperLanguage`/`whisperTimeout` (`Whisper:*`, same defaults as the host).
 
 ### 5.2 Safety (hard rules)
 - **Postgres: read-only.** The harness only calls the existing `SELECT`-based query methods. It never writes/deletes in the WhatsApp DB.
