@@ -82,10 +82,16 @@ Respond ONLY with a JSON object:
 }
 
 Rules:
-- Only match if the new message is clearly about the same subject as an existing topic
-- A confidence below 0.75 should result in match: false
-- Prefer creating a new topic over forcing a weak match
-- Do not add explanation outside the JSON object."""
+- Prefer matching an existing topic when the message concerns the same subject, incident, event, person, or thread — including follow-ups, status updates, corrections, and related questions.
+- A follow-up about the same incident (e.g. another update on the same gate fault, or a new detail about the same trip) is the SAME topic, even if the wording differs.
+- Only create a new topic when the message clearly introduces a distinct subject not covered by any candidate.
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object.
+
+Examples:
+- A topic "13th Street gate fault" and a message "the gate motor is slow again" -> same topic.
+- A topic "Ethan birthday party" and a message about "the party cake order" -> same topic.
+- A topic "school fees" and a message about "school sports day" -> different topics."""
 
     let taskCreateSystem = """You are creating a task entry for a personal knowledge base.
 Generate the YAML frontmatter and a brief body for a new task file.
