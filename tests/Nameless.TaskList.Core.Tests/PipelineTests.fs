@@ -532,3 +532,66 @@ let ``topic-update call also receives recent conversation history`` () =
     let topicUpdateUserMsg = (chat.Received.[2].[1] :?> UserMessage).Content
     Assert.Contains("Are you free for Ethan's party on the 19th?", topicUpdateUserMsg)
     Assert.Contains("Recent conversation", topicUpdateUserMsg)
+
+// A message whose sender mentions one person, with configurable people_mentioned.
+let private personMessage () : ChatMessage =
+    { sampleMessage () with Content = "Took Ethan to see the doctor today" }
+
+let private personDeps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
+    { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
+      Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
+      Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+
+let private seedPerson (vault: FakeVault) (path: string) (title: string) (context: string) (aliases: string list) =
+    let aliasYaml = if List.isEmpty aliases then "[]" else "[" + String.concat ", " aliases + "]"
+    vault.Seed(path, sprintf "---\ntype: Person\ntitle: %s\nrole: spouse\ncontext: [%s]\nchannel: \"\"\nphone: \"\"\nemail: \"\"\ntags: []\naliases: %s\n---\nstub\n" title context aliasYaml)
+
+[<Fact>]
+let ``person mention matching a recorded alias does not create a duplicate`` () =
+    let vault = FakeVault()
+    seedPerson vault "people/family/sarah-smith.md" "Sarah Smith" "family" ["Mom"]
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"note from mom","action_required":false,"urgency":"low","people_mentioned":["Mom"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Note from mom"}"""
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    // No person-stub response scripted: the mention must resolve to the existing alias and skip the LLM.
+    let chat = FakeChatClient([ classify; topicMatch; topicBody ])
+    let d = personDeps (FakeMessages(Some(personMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let peopleFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> List.ofSeq
+        Assert.Equal<string list>([ "people/family/sarah-smith.md" ], peopleFiles)
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``new surface form whose canonical title matches an existing person appends an alias`` () =
+    let vault = FakeVault()
+    seedPerson vault "people/family/sarah-smith.md" "Sarah Smith" "family" []
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"sarah update","action_required":false,"urgency":"low","people_mentioned":["Sarah"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Sarah update"}"""
+    let personStub = Responses.final "---\ntype: Person\ntitle: Sarah Smith\nrole: spouse\ncontext: [family]\naliases: []\n---\nSarah is the owner's wife. ⚠ Stub — details to be completed."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personStub; topicBody ])
+    let d = personDeps (FakeMessages(Some(personMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let peopleFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> List.ofSeq
+        Assert.Equal<string list>([ "people/family/sarah-smith.md" ], peopleFiles)   // no new file
+        Assert.Contains("Sarah", vault.Files.["people/family/sarah-smith.md"])        // alias recorded
+        Assert.Contains("aliases", vault.Files.["people/family/sarah-smith.md"])
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``a doctor is filed under the medical context, not family`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"saw the paediatrician","action_required":false,"urgency":"low","people_mentioned":["Dr Naidoo"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Paediatrician visit"}"""
+    let personStub = Responses.final "---\ntype: Person\ntitle: Dr Naidoo\nrole: paediatrician\ncontext: [medical]\naliases: []\n---\nEthan's paediatrician. ⚠ Stub — details to be completed."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personStub; topicBody ])
+    let d = personDeps (FakeMessages(Some(personMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        Assert.True(vault.Files.ContainsKey("people/medical/dr-naidoo.md"))
+        Assert.False(vault.Files.ContainsKey("people/family/dr-naidoo.md"))
+    | other -> failwithf "expected Processed, got %A" other

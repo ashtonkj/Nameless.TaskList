@@ -46,9 +46,24 @@ module Pipeline =
 
     let private knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
 
-    /// True if a person file for this slug exists under any known context directory.
-    let private personExists (vault: IVault) (personSlug: string) =
-        knownContexts |> List.exists (fun ctx -> vault.Exists(Naming.personPath ctx personSlug))
+    // Build a (slug -> person file path) index over every person's title + aliases.
+    let private peopleIndex (vault: IVault) : (string * string list) list =
+        vault.ListFilesRecursive "people"
+        |> List.choose (fun path ->
+            try
+                let mf = MarkdownFile.FromString (vault.Read path)
+                match mf.FrontMatter with
+                | Some fm ->
+                    let p = Frontmatter.deserialize<Person> fm
+                    let aliasSlugs = if isNull p.Aliases then [] else p.Aliases |> Array.toList |> List.map Naming.slug
+                    let keys = (Naming.slug p.Title :: aliasSlugs) |> List.filter (fun s -> s <> "")
+                    Some (path, keys)
+                | None -> None
+            with _ -> None)
+
+    /// Resolve a mention slug to an existing person file via title or alias (exact, normalized).
+    let private resolvePerson (index: (string * string list) list) (mentionSlug: string) : string option =
+        index |> List.tryPick (fun (path, keys) -> if List.contains mentionSlug keys then Some path else None)
 
     /// Create-if-missing + activity update for the message's channel file.
     let private updateChannel (deps: PipelineDeps) (msg: ChatMessage) (channelSlug: string) (topic: string option) =
@@ -388,12 +403,19 @@ module Pipeline =
 
             let notePaths = writeEntities deps noteSpec (List.ofArray classification.Entities.Notes)
 
-            // --- Step: create Person-stub files for mentioned people not already in the vault ---
+            // --- Step: resolve mentioned people (alias-aware) and create stubs only when genuinely new ---
+            let messageCtx =
+                classification.Contexts
+                |> Array.tryFind (fun c -> List.contains c knownContexts)
+                |> Option.defaultValue "family"
+            let index = peopleIndex deps.Vault
             classification.PeopleMentioned
             |> Array.toList
             |> List.iter (fun name ->
-                let personSlug = Naming.slug name
-                if not (System.String.IsNullOrWhiteSpace personSlug) && not (personExists deps.Vault personSlug) then
+                let mentionSlug = Naming.slug name
+                if System.String.IsNullOrWhiteSpace mentionSlug then ()
+                elif (resolvePerson index mentionSlug).IsSome then ()   // already known by name or alias
+                else
                     let user =
                         sprintf "Person mentioned: %s\nMessage context: %s\nMentioned in: %s"
                             name (String.concat ", " classification.Contexts) messagePath
@@ -408,17 +430,44 @@ module Pipeline =
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
-                            { Type = "Person"; Title = name; Role = ""; Context = [| "family" |]
-                              Channel = ""; Phone = ""; Email = ""; Tags = [||] },
+                            { Type = "Person"; Title = name; Role = ""; Context = [| messageCtx |]
+                              Channel = ""; Phone = ""; Email = ""; Tags = [||]; Aliases = [||] },
                             sprintf "%s\n\n⚠ Stub — details to be completed." name
-                    let ctx =
-                        let candidate =
-                            if not (isNull record.Context) && record.Context.Length > 0
-                               && not (System.String.IsNullOrWhiteSpace record.Context.[0])
-                            then record.Context.[0] else "family"
-                        if List.contains candidate knownContexts then candidate else "family"
-                    deps.Vault.Write(Naming.personPath ctx personSlug,
-                                     MarkdownFile.ToString (Frontmatter.serialize record) body))
+                    let canonicalSlug = Naming.slug record.Title
+                    match resolvePerson index canonicalSlug with
+                    | Some existingPath ->
+                        // Canonical name already exists — record this surface form as an alias instead of duplicating.
+                        try
+                            let existing = MarkdownFile.FromString (deps.Vault.Read existingPath)
+                            match existing.FrontMatter with
+                            | Some fm ->
+                                let ep = Frontmatter.deserialize<Person> fm
+                                let existingAliases = if isNull ep.Aliases then [||] else ep.Aliases
+                                let known =
+                                    (Naming.slug ep.Title :: (existingAliases |> Array.toList |> List.map Naming.slug)) |> Set.ofList
+                                if not (Set.contains mentionSlug known) then
+                                    let merged = { ep with Aliases = Array.append existingAliases [| name.Trim() |] }
+                                    deps.Vault.Write(existingPath, MarkdownFile.ToString (Frontmatter.serialize merged) existing.Content)
+                            | None -> ()
+                        with _ -> ()
+                    | None ->
+                        // Genuinely new person: file by canonical slug under a role-derived context.
+                        let ctx =
+                            let candidate =
+                                if not (isNull record.Context) && record.Context.Length > 0
+                                   && not (System.String.IsNullOrWhiteSpace record.Context.[0])
+                                then record.Context.[0] else messageCtx
+                            if List.contains candidate knownContexts then candidate else messageCtx
+                        // If the surface mention differs from the canonical title, seed it as an alias.
+                        let seededAliases =
+                            if mentionSlug <> canonicalSlug && not (System.String.IsNullOrWhiteSpace name) then
+                                let existing = if isNull record.Aliases then [||] else record.Aliases
+                                if existing |> Array.exists (fun a -> Naming.slug a = mentionSlug) then existing
+                                else Array.append existing [| name.Trim() |]
+                            else (if isNull record.Aliases then [||] else record.Aliases)
+                        let finalRecord = { record with Aliases = seededAliases }
+                        deps.Vault.Write(Naming.personPath ctx canonicalSlug,
+                                         MarkdownFile.ToString (Frontmatter.serialize finalRecord) body))
 
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =

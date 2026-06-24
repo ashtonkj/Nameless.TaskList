@@ -146,10 +146,17 @@ A new person has been mentioned in a message. Create a minimal person file
 based on the available information.
 
 Rules:
-- title: full name if known, role if name not known (e.g. "Ethan's Class Teacher")
-- role: their relationship to the KB owner or their professional role
-- context: infer from the message context — choose from [family, medical, school, finance, professional]
-- All unknown fields should be null or omitted
+- title: the person's canonical full name if known (e.g. "Dr Naidoo", "Sarah Smith"); if no name is known, use their role (e.g. "Ethan's Class Teacher"). Always prefer the canonical name over a nickname or relationship word.
+- role: their relationship to the KB owner or their professional role.
+- context: choose by the person's ROLE, not the chat it appeared in — one of [family, medical, school, finance, professional]:
+    doctor / dentist / specialist / physio / nurse -> medical
+    teacher / principal / coach / tutor -> school
+    accountant / advisor / banker / broker -> finance
+    colleague / manager / client / boss -> professional
+    relative / friend / neighbour -> family
+  If the role is genuinely unknown, omit context (leave it empty) and the pipeline will fall back.
+- aliases: array of other surface forms this person is referred to by (nicknames, relationship words like "Mom", first-name-only). Use [] if none.
+- All other unknown fields should be null or omitted.
 - Body: 1 sentence describing who this person is and how they relate to the KB owner.
   End with: "⚠ Stub — details to be completed."
 

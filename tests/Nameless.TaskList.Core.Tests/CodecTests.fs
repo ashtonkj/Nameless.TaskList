@@ -63,7 +63,7 @@ let ``Commitment and Note and Person round-trip`` () =
 
     let p : Person =
         { Type = "Person"; Title = "Dr Naidoo"; Role = "Paediatrician"; Context = [| "medical" |]
-          Channel = ""; Phone = ""; Email = ""; Tags = [| "doctor" |] }
+          Channel = ""; Phone = ""; Email = ""; Tags = [| "paediatrician" |]; Aliases = [| "Naidoo" |] }
     let pb = Frontmatter.deserialize<Person> (MarkdownFile.FromString (MarkdownFile.ToString (Frontmatter.serialize p) "b")).FrontMatter.Value
     Assert.Equal("Paediatrician", pb.Role)
 

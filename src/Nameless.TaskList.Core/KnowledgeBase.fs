@@ -163,7 +163,8 @@ type Person =
       Channel: string
       Phone: string
       Email: string
-      Tags: string array }
+      Tags: string array
+      Aliases: string array }
 
 [<CLIMutable>]
 type Digest =
