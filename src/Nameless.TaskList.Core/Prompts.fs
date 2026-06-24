@@ -50,7 +50,7 @@ For each message, respond ONLY with a JSON object in this exact format:
     "tasks": ["brief description of any tasks implied"],
     "events": ["brief description of any events mentioned with dates if present"],
     "commitments": ["brief description of any deadlines or obligations mentioned"],
-    "notes": ["any factual information worth storing"]
+    "notes": ["only DURABLE reference facts worth keeping long-term and across conversations — account/policy/membership numbers, addresses, contact details, medical records, standing preferences. Do NOT create notes for per-message observations, status updates, or anything specific to a single ongoing conversation; those belong to the topic. Empty array if none."]
   }
 }
 
@@ -82,10 +82,16 @@ Respond ONLY with a JSON object:
 }
 
 Rules:
-- Only match if the new message is clearly about the same subject as an existing topic
-- A confidence below 0.75 should result in match: false
-- Prefer creating a new topic over forcing a weak match
-- Do not add explanation outside the JSON object."""
+- Prefer matching an existing topic when the message concerns the same subject, incident, event, person, or thread — including follow-ups, status updates, corrections, and related questions.
+- A follow-up about the same incident (e.g. another update on the same gate fault, or a new detail about the same trip) is the SAME topic, even if the wording differs.
+- Only create a new topic when the message clearly introduces a distinct subject not covered by any candidate.
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object.
+
+Examples:
+- A topic "13th Street gate fault" and a message "the gate motor is slow again" -> same topic.
+- A topic "Ethan birthday party" and a message about "the party cake order" -> same topic.
+- A topic "school fees" and a message about "school sports day" -> different topics."""
 
     let taskCreateSystem = """You are creating a task entry for a personal knowledge base.
 Generate the YAML frontmatter and a brief body for a new task file.
@@ -131,13 +137,14 @@ Rules:
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
     let noteCreateSystem = """You are creating a Note entry for a personal knowledge base.
-A note captures a fact or piece of reference information worth keeping.
+A Note is a DURABLE, evolving reference document for facts that stay useful across many conversations
+(e.g. account numbers, contact details, medical records, standing preferences) — not a per-message log.
 
 Rules:
-- title: short noun phrase naming the fact
-- context: array — choose from [family, medical, school, finance, professional, personal-kb]
-- tags: array of short lowercase tags (use [] if none)
-- Body: 1–3 sentences capturing the fact, including any specifics (numbers, names, dates).
+- title: short noun phrase naming the reference subject (e.g. "Medical aid details").
+- context: array — choose from [family, medical, school, finance, professional, personal-kb].
+- tags: array of short lowercase tags (use [] if none).
+- Body: organise the fact under a short markdown section heading; include specifics (numbers, names, dates).
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
@@ -146,14 +153,52 @@ A new person has been mentioned in a message. Create a minimal person file
 based on the available information.
 
 Rules:
-- title: full name if known, role if name not known (e.g. "Ethan's Class Teacher")
-- role: their relationship to the KB owner or their professional role
-- context: infer from the message context — choose from [family, medical, school, finance, professional]
-- All unknown fields should be null or omitted
+- title: the person's canonical full name if known (e.g. "Dr Naidoo", "Sarah Smith"); if no name is known, use their role (e.g. "Ethan's Class Teacher"). Always prefer the canonical name over a nickname or relationship word.
+- role: their relationship to the KB owner or their professional role.
+- context: choose by the person's ROLE, not the chat it appeared in — one of [family, medical, school, finance, professional]:
+    doctor / dentist / specialist / physio / nurse -> medical
+    teacher / principal / coach / tutor -> school
+    accountant / advisor / banker / broker -> finance
+    colleague / manager / client / boss -> professional
+    relative / friend / neighbour -> family
+  If the role is genuinely unknown, omit context (leave it empty) and the pipeline will fall back.
+- aliases: array of other surface forms this person is referred to by (nicknames, relationship words like "Mom", first-name-only). Use [] if none.
+- All other unknown fields should be null or omitted.
 - Body: 1 sentence describing who this person is and how they relate to the KB owner.
   End with: "⚠ Stub — details to be completed."
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
+
+    let noteMatchSystem = """You are a knowledge base assistant. Decide whether a new durable fact
+belongs to an existing reference note, or whether it is a new note.
+
+You are given the new note's intent and a list of candidate notes (slug, title, summary).
+Respond ONLY with a JSON object:
+
+{
+  "match": true/false,
+  "topic_slug": "slug of the matched note, or null if no match",
+  "confidence": 0.0,
+  "match_reason": "brief explanation",
+  "new_topic_title": "if match is false, a concise title for the new note, else null"
+}
+
+Rules:
+- Match only if the new fact is about the same subject as an existing note (e.g. another detail of the same account, person, or record).
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object."""
+
+    let noteUpdateSystem = """You are updating a durable reference note in a personal knowledge base.
+You are given the current note body and a new fact to incorporate.
+
+Rewrite the note body to fold in the new fact. Keep it concise and organised under markdown section
+headings. Preserve existing facts; correct them only if the new information supersedes them.
+
+Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
+
+    let noteUpdateUser (existingBody: string) (intent: string) (raw: string) : string =
+        sprintf "Current note body:\n%s\n\nNew fact (intent):\n%s\n\nSource message raw text:\n%s"
+            existingBody intent raw
 
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.

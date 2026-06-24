@@ -13,6 +13,8 @@ module Pipeline =
           Embedder: IEmbedder
           TopK: int
           SimilarityFloor: float
+          NoteTopK: int
+          NoteSimilarityFloor: float
           Vision: IVision
           Transcriber: ITranscriber }
 
@@ -46,9 +48,24 @@ module Pipeline =
 
     let private knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
 
-    /// True if a person file for this slug exists under any known context directory.
-    let private personExists (vault: IVault) (personSlug: string) =
-        knownContexts |> List.exists (fun ctx -> vault.Exists(Naming.personPath ctx personSlug))
+    // Build a (slug -> person file path) index over every person's title + aliases.
+    let private peopleIndex (vault: IVault) : (string * string list) list =
+        vault.ListFilesRecursive "people"
+        |> List.choose (fun path ->
+            try
+                let mf = MarkdownFile.FromString (vault.Read path)
+                match mf.FrontMatter with
+                | Some fm ->
+                    let p = Frontmatter.deserialize<Person> fm
+                    let aliasSlugs = if isNull p.Aliases then [] else p.Aliases |> Array.toList |> List.map Naming.slug
+                    let keys = (Naming.slug p.Title :: aliasSlugs) |> List.filter (fun s -> s <> "")
+                    Some (path, keys)
+                | None -> None
+            with _ -> None)
+
+    /// Resolve a mention slug to an existing person file via title or alias (exact, normalized).
+    let private resolvePerson (index: (string * string list) list) (mentionSlug: string) : string option =
+        index |> List.tryPick (fun (path, keys) -> if List.contains mentionSlug keys then Some path else None)
 
     /// Create-if-missing + activity update for the message's channel file.
     let private updateChannel (deps: PipelineDeps) (msg: ChatMessage) (channelSlug: string) (topic: string option) =
@@ -360,40 +377,110 @@ module Pipeline =
             let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments)
             ignore commitmentPaths
 
-            // --- Step: create note files ---
-            let noteSpec : EntitySpec<Note> =
-                { Prompt = Prompts.noteCreateSystem
-                  BuildUser =
-                    (fun intent ->
-                        sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
+            // --- Step: notes (durable reference only) — match an existing note and merge, else create ---
+            let interpretNote (stripped: string) (intent: string) : Note * string =
+                try
+                    let parsed = MarkdownFile.FromString stripped
+                    match parsed.FrontMatter with
+                    | Some fm ->
+                        let n = Frontmatter.deserialize<Note> fm
+                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Source = messagePath }, parsed.Content
+                        else raise (System.Exception("empty title"))
+                    | None -> raise (System.Exception("no frontmatter"))
+                with _ ->
+                    { Type = "Note"; Title = intent; Context = classification.Contexts
+                      PeopleLinked = classification.PeopleMentioned; Tags = [||]
+                      Source = messagePath; LastVerified = "" }, intent
+
+            let createNewNote (intent: string) : string =
+                let raw =
+                    Agent.runConversation deps.Chat [] Prompts.noteCreateSystem
+                        (sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
                             intent msg.Content (String.concat ", " classification.Contexts) messagePath)
-                  Interpret =
-                    (fun stripped intent ->
+                let record, body = interpretNote (stripFences raw) intent
+                let text = MarkdownFile.ToString (Frontmatter.serialize record) body
+                let path = freePath deps.Vault (Naming.notePath record.Title)
+                deps.Vault.Write(path, text)
+                path
+
+            let processNote (intent: string) : string =
+                // Re-scan the vault on every call so a note written by an earlier intent in this same
+                // message is visible when processing the next intent (prevents -2.md duplicates).
+                let existingNotes =
+                    deps.Vault.ListFiles "notes"
+                    |> List.choose (fun path ->
                         try
-                            let parsed = MarkdownFile.FromString stripped
-                            match parsed.FrontMatter with
+                            let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                            match mf.FrontMatter with
                             | Some fm ->
                                 let n = Frontmatter.deserialize<Note> fm
-                                if not (System.String.IsNullOrWhiteSpace n.Title) then
-                                    { Record = { n with Type = "Note"; Source = messagePath }; Body = parsed.Content }
-                                else raise (System.Exception("empty title"))
-                            | None -> raise (System.Exception("no frontmatter"))
-                        with _ ->
-                            let fb : Note =
-                                { Type = "Note"; Title = intent; Context = classification.Contexts
-                                  PeopleLinked = classification.PeopleMentioned; Tags = [||]
-                                  Source = messagePath; LastVerified = "" }
-                            { Record = fb; Body = intent })
-                  BasePath = (fun n -> Naming.notePath n.Title) }
+                                Some (System.IO.Path.GetFileNameWithoutExtension(path), n.Title, mf.Content.Trim())
+                            | None -> None
+                        with _ -> None)
+                let shortlist =
+                    if List.isEmpty existingNotes then None
+                    else
+                        try
+                            let iv = deps.Embedder.Embed intent
+                            existingNotes
+                            |> List.map (fun (slug, title, summary) ->
+                                slug, title, summary, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + summary)))
+                            |> List.filter (fun (_, _, _, s) -> s >= deps.NoteSimilarityFloor)
+                            |> List.sortByDescending (fun (_, _, _, s) -> s)
+                            |> List.truncate deps.NoteTopK
+                            |> Some
+                        with _ -> None
+                match shortlist with
+                | Some (_ :: _ as candidates) ->
+                    let candidateText =
+                        candidates
+                        |> List.map (fun (slug, title, summary, _) -> sprintf "slug: %s\ntitle: %s\nsummary: %s" slug title summary)
+                        |> String.concat "\n\n"
+                    let payload = sprintf "New note intent: %s\n\nCandidate notes:\n%s" intent candidateText
+                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.noteMatchSystem payload) with
+                    | Error _ -> createNewNote intent
+                    | Ok m ->
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
+                        match m.Match, matched with
+                        | true, Some (slug, _, _, _) ->
+                            let path = sprintf "notes/%s.md" slug
+                            try
+                                let existing = MarkdownFile.FromString (deps.Vault.Read path)
+                                match existing.FrontMatter with
+                                | Some fm ->
+                                    let n = Frontmatter.deserialize<Note> fm
+                                    let mergedBody =
+                                        Agent.runConversation deps.Chat [] Prompts.noteUpdateSystem
+                                            (Prompts.noteUpdateUser existing.Content intent msg.Content)
+                                        |> stripFences
+                                    let merged =
+                                        { n with
+                                            LastVerified = isoTimestamp msg.Timestamp
+                                            Context = Array.append (if isNull n.Context then [||] else n.Context) classification.Contexts |> Array.distinct
+                                            PeopleLinked = Array.append (if isNull n.PeopleLinked then [||] else n.PeopleLinked) classification.PeopleMentioned |> Array.distinct }
+                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) mergedBody)
+                                    path
+                                | None -> createNewNote intent
+                            with _ -> createNewNote intent
+                        | _ -> createNewNote intent
+                | _ -> createNewNote intent
 
-            let notePaths = writeEntities deps noteSpec (List.ofArray classification.Entities.Notes)
+            let notePaths = classification.Entities.Notes |> Array.toList |> List.map processNote
 
-            // --- Step: create Person-stub files for mentioned people not already in the vault ---
+            // --- Step: resolve mentioned people (alias-aware) and create stubs only when genuinely new ---
+            let messageCtx =
+                classification.Contexts
+                |> Array.tryFind (fun c -> List.contains c knownContexts)
+                |> Option.defaultValue "family"
             classification.PeopleMentioned
             |> Array.toList
             |> List.iter (fun name ->
-                let personSlug = Naming.slug name
-                if not (System.String.IsNullOrWhiteSpace personSlug) && not (personExists deps.Vault personSlug) then
+                let index = peopleIndex deps.Vault   // rebuilt per mention so files written earlier in this loop are visible
+                let mentionSlug = Naming.slug name
+                if System.String.IsNullOrWhiteSpace mentionSlug then ()
+                elif (resolvePerson index mentionSlug).IsSome then ()   // already known by name or alias
+                else
                     let user =
                         sprintf "Person mentioned: %s\nMessage context: %s\nMentioned in: %s"
                             name (String.concat ", " classification.Contexts) messagePath
@@ -408,17 +495,44 @@ module Pipeline =
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
-                            { Type = "Person"; Title = name; Role = ""; Context = [| "family" |]
-                              Channel = ""; Phone = ""; Email = ""; Tags = [||] },
+                            { Type = "Person"; Title = name; Role = ""; Context = [| messageCtx |]
+                              Channel = ""; Phone = ""; Email = ""; Tags = [||]; Aliases = [||] },
                             sprintf "%s\n\n⚠ Stub — details to be completed." name
-                    let ctx =
-                        let candidate =
-                            if not (isNull record.Context) && record.Context.Length > 0
-                               && not (System.String.IsNullOrWhiteSpace record.Context.[0])
-                            then record.Context.[0] else "family"
-                        if List.contains candidate knownContexts then candidate else "family"
-                    deps.Vault.Write(Naming.personPath ctx personSlug,
-                                     MarkdownFile.ToString (Frontmatter.serialize record) body))
+                    let canonicalSlug = Naming.slug record.Title
+                    match resolvePerson index canonicalSlug with
+                    | Some existingPath ->
+                        // Canonical name already exists — record this surface form as an alias instead of duplicating.
+                        try
+                            let existing = MarkdownFile.FromString (deps.Vault.Read existingPath)
+                            match existing.FrontMatter with
+                            | Some fm ->
+                                let ep = Frontmatter.deserialize<Person> fm
+                                let existingAliases = if isNull ep.Aliases then [||] else ep.Aliases
+                                let known =
+                                    (Naming.slug ep.Title :: (existingAliases |> Array.toList |> List.map Naming.slug)) |> Set.ofList
+                                if not (Set.contains mentionSlug known) then
+                                    let merged = { ep with Aliases = Array.append existingAliases [| name.Trim() |] }
+                                    deps.Vault.Write(existingPath, MarkdownFile.ToString (Frontmatter.serialize merged) existing.Content)
+                            | None -> ()
+                        with _ -> ()
+                    | None ->
+                        // Genuinely new person: file by canonical slug under a role-derived context.
+                        let ctx =
+                            let candidate =
+                                if not (isNull record.Context) && record.Context.Length > 0
+                                   && not (System.String.IsNullOrWhiteSpace record.Context.[0])
+                                then record.Context.[0] else messageCtx
+                            if List.contains candidate knownContexts then candidate else messageCtx
+                        // If the surface mention differs from the canonical title, seed it as an alias.
+                        let seededAliases =
+                            if mentionSlug <> canonicalSlug && not (System.String.IsNullOrWhiteSpace name) then
+                                let existing = if isNull record.Aliases then [||] else record.Aliases
+                                if existing |> Array.exists (fun a -> Naming.slug a = mentionSlug) then existing
+                                else Array.append existing [| name.Trim() |]
+                            else (if isNull record.Aliases then [||] else record.Aliases)
+                        let finalRecord = { record with Aliases = seededAliases }
+                        deps.Vault.Write(Naming.personPath ctx canonicalSlug,
+                                         MarkdownFile.ToString (Frontmatter.serialize finalRecord) body))
 
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =
