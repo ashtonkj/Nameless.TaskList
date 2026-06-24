@@ -1,0 +1,1 @@
+module Nameless.TaskList.IntegrationTests.PipelineIntegrationTests
