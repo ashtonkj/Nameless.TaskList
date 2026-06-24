@@ -30,7 +30,8 @@ let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : Pip
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = FakeEmbedder(fun _ -> failwith "no embedder configured") :> IEmbedder
       TopK = 5; SimilarityFloor = 0.5
-      Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision }
+      Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
 
 [<Fact>]
 let ``returns NotFound when the message does not exist`` () =
@@ -257,7 +258,8 @@ let ``image-only message is described by vision and processed as that text`` () 
     let vision = FakeVision(fun _ -> "INVITE: Ethan's party Saturday 2pm, please RSVP") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
-              Vision = vision }
+              Vision = vision
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) ->
         let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
@@ -274,7 +276,8 @@ let ``image-only message falls back to noise when vision fails`` () =
     let vision = FakeVision(fun _ -> failwith "vision down") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
-              Vision = vision }
+              Vision = vision
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     // vision throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
@@ -287,7 +290,8 @@ let ``vision-derived noise preserves the text`` () =
     let vision = FakeVision(fun _ -> "SCREENSHOT: random meme text") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
-              Vision = vision }
+              Vision = vision
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     match Pipeline.processMessage d "M1" "jid" with
     | ProcessedNoise ->
         let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
@@ -306,7 +310,8 @@ let ``GetMediaBytes=None falls back to noise`` () =
     let vision = FakeVision(fun _ -> failwith "should not be called") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5
-              Vision = vision }
+              Vision = vision
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     // GetMediaBytes returns None -> vision is not called -> content stays empty -> classify (scripted noise) -> ProcessedNoise
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
@@ -316,7 +321,8 @@ let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (
     { Messages = FakeMessages(Some(sampleMessage ())) :> IMessageSource
       Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = embedder; TopK = topK; SimilarityFloor = floor
-      Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision }
+      Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
 
 // Seed one active topic with a known slug + understanding.
 let private seedTopic (v: FakeVault) (slug: string) (title: string) (understanding: string) =

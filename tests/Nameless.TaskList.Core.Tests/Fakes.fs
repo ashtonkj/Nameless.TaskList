@@ -38,6 +38,11 @@ type FakeVision(describe: byte array -> string) =
     interface IVision with
         member _.Describe(imageBytes) = describe imageBytes
 
+/// Test transcriber: maps audio bytes -> text via the supplied function (which may throw).
+type FakeTranscriber(transcribe: byte array -> string) =
+    interface ITranscriber with
+        member _.Transcribe(audioBytes) = transcribe audioBytes
+
 module Responses =
     let final (content: string) : ChatResponse =
         { Message = { Content = content; ToolCalls = [||] } }
