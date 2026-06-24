@@ -16,6 +16,10 @@ dotnet test
 # Run one test class
 dotnet test tests/Nameless.TaskList.Core.Tests --filter "FullyQualifiedName~PipelineTests"
 
+# Run the opt-in live-service integration suite (real Postgres/Ollama/Whisper; each test skips when its service is absent).
+# Excluded from the default `dotnet test`; requires the -p:Integration=true flag.
+dotnet test tests/Nameless.TaskList.IntegrationTests -p:Integration=true
+
 # Run the ASP.NET web host — exposes POST /messages/process { id, chatJid }
 dotnet run --project src/Nameless.TaskList
 
@@ -23,7 +27,7 @@ dotnet run --project src/Nameless.TaskList
 dotnet fsi src/Nameless.TaskList.Core/TestScript.fsx
 ```
 
-Tests live in `tests/Nameless.TaskList.Core.Tests` (xUnit, in-memory `FakeVault`/`FakeChatClient`/`FakeMessages`) and `tests/Nameless.TaskList.Tests` (endpoint result→HTTP mapping). They need no live Postgres/Ollama/vault. There is intentionally **no** live-service integration test yet.
+Tests live in `tests/Nameless.TaskList.Core.Tests` (xUnit, in-memory `FakeVault`/`FakeChatClient`/`FakeMessages`) and `tests/Nameless.TaskList.Tests` (endpoint result→HTTP mapping). They need no live Postgres/Ollama/vault. Live-service integration tests live in `tests/Nameless.TaskList.IntegrationTests` and are opt-in (see command above).
 
 ### External dependencies the code expects at runtime (not in tests)
 - **PostgreSQL** database named `whatsapp` on `127.0.0.1:5432` — a WhatsApp message store populated by a whatsmeow-based bridge (tables `messages`, `chats`, `whatsmeow_contacts`). Queries live in `Library.fs`; the `PostgresMessageSource` adapter runs them.
