@@ -544,7 +544,7 @@ let private personDeps (messages: IMessageSource) (vault: FakeVault) (chat: ICha
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
 
 let private seedPerson (vault: FakeVault) (path: string) (title: string) (context: string) (aliases: string list) =
-    let aliasYaml = if List.isEmpty aliases then "[]" else "[" + String.concat ", " aliases + "]"
+    let aliasYaml = if List.isEmpty aliases then "[]" else "[" + (aliases |> List.map (fun a -> sprintf "\"%s\"" a) |> String.concat ", ") + "]"
     vault.Seed(path, sprintf "---\ntype: Person\ntitle: %s\nrole: spouse\ncontext: [%s]\nchannel: \"\"\nphone: \"\"\nemail: \"\"\ntags: []\naliases: %s\n---\nstub\n" title context aliasYaml)
 
 [<Fact>]
@@ -594,4 +594,28 @@ let ``a doctor is filed under the medical context, not family`` () =
     | Processed(_, _) ->
         Assert.True(vault.Files.ContainsKey("people/medical/dr-naidoo.md"))
         Assert.False(vault.Files.ContainsKey("people/family/dr-naidoo.md"))
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``two mentions resolving to the same canonical person produce one file with both aliases`` () =
+    // No people seeded — both "Mom" and "Sarah" are unknown.
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"message about sarah","action_required":false,"urgency":"low","people_mentioned":["Mom","Sarah"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Sarah update"}"""
+    // First personStub: surface "Mom" -> canonical title "Sarah Smith"
+    let personStubMom = Responses.final "---\ntype: Person\ntitle: Sarah Smith\nrole: spouse\ncontext:\n  - family\naliases: []\n---\nSarah Smith. ⚠ Stub — details to be completed."
+    // Second personStub: surface "Sarah" -> canonical title "Sarah Smith" (same canonical)
+    let personStubSarah = Responses.final "---\ntype: Person\ntitle: Sarah Smith\nrole: spouse\ncontext:\n  - family\naliases: []\n---\nSarah Smith. ⚠ Stub — details to be completed."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personStubMom; personStubSarah; topicBody ])
+    let d = personDeps (FakeMessages(Some(personMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        // Exactly one people file must exist
+        let peopleFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> List.ofSeq
+        Assert.Equal<string list>([ "people/family/sarah-smith.md" ], peopleFiles)
+        // Both surface forms must appear in the file (as aliases)
+        let content = vault.Files.["people/family/sarah-smith.md"]
+        Assert.Contains("Mom", content)
+        Assert.Contains("Sarah", content)
     | other -> failwithf "expected Processed, got %A" other

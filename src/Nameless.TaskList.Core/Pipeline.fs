@@ -408,10 +408,10 @@ module Pipeline =
                 classification.Contexts
                 |> Array.tryFind (fun c -> List.contains c knownContexts)
                 |> Option.defaultValue "family"
-            let index = peopleIndex deps.Vault
             classification.PeopleMentioned
             |> Array.toList
             |> List.iter (fun name ->
+                let index = peopleIndex deps.Vault   // rebuilt per mention so files written earlier in this loop are visible
                 let mentionSlug = Naming.slug name
                 if System.String.IsNullOrWhiteSpace mentionSlug then ()
                 elif (resolvePerson index mentionSlug).IsSome then ()   // already known by name or alias
