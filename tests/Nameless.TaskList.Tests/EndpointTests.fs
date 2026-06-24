@@ -77,34 +77,6 @@ let ``bulk progress Some maps to 200 and None to 404`` () =
     Assert.Equal(200, statusOfResult (BulkHandler.progressToHttp (Some p)))
     Assert.Equal(404, statusOfResult (BulkHandler.progressToHttp None))
 
-// Fake IMessageSource that throws on GetMessagesSince to test background job error handling.
-type private FailingMessageSource() =
-    interface IMessageSource with
-        member _.GetMessage(_, _) = None
-        member _.GetRecent(_, _, _) = []
-        member _.GetMessagesSince(_, _) = failwith "db down"
-        member _.GetMediaBytes(_, _) = None
-
-[<Fact>]
-let ``bulk job background failure is caught and stored`` () =
-    let fake = FailingMessageSource() :> IMessageSource
-    let result = BulkJobs.tryStart fake (fun _ _ -> Skipped) (System.DateTime(2026, 6, 1)) None
-    let jobId =
-        match result with
-        | Ok id -> id
-        | Error e -> failwith e
-
-    let mutable progress = None
-    for _ = 1 to 50 do
-        System.Threading.Thread.Sleep(20)
-        progress <- BulkJobs.get jobId
-
-    let final = progress
-    Assert.True(Option.isSome final, "Expected to find the job after polling")
-    let p = Option.get final
-    Assert.Equal("error", p.Status)
-    Assert.True((p.Error.Length > 0 && p.Error.Contains("db down")), sprintf "Expected error containing 'db down', got: %s" p.Error)
-
 open System.Threading
 
 // In-memory IJobStore: Load returns the seed; Save records the latest snapshot.
@@ -136,6 +108,23 @@ let private pollUntil (predicate: unit -> bool) : bool =
         if not ok then Thread.Sleep(20)
         i <- i + 1
     ok
+
+// Fake IMessageSource that throws on GetMessagesSince to test background job error handling.
+type private FailingMessageSource() =
+    interface IMessageSource with
+        member _.GetMessage(_, _) = None
+        member _.GetRecent(_, _, _) = []
+        member _.GetMessagesSince(_, _) = failwith "db down"
+        member _.GetMediaBytes(_, _) = None
+
+[<Fact>]
+let ``bulk job background failure is caught and stored`` () =
+    let fake = FailingMessageSource() :> IMessageSource
+    let reg = BulkJobRegistry(FakeJobStore([]), 20)
+    let jobId = match reg.TryStart fake (fun _ _ -> Skipped) (System.DateTime(2026, 6, 1)) None with Ok i -> i | Error e -> failwith e
+    Assert.True(pollUntil (fun () -> match reg.Get jobId with Some j -> j.Status = "error" | None -> false))
+    let p = (reg.Get jobId).Value
+    Assert.True(p.Error.Contains("db down"), sprintf "Expected error containing 'db down', got: %s" p.Error)
 
 [<Fact>]
 let ``registry rejects a second concurrent job`` () =
