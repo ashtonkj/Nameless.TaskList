@@ -30,3 +30,7 @@ type IEmbedder =
 /// Describes an image (and transcribes any text in it) as plain text.
 type IVision =
     abstract member Describe : imageBytes: byte array -> string
+
+/// Transcribes spoken audio (e.g. a voice note) to plain text.
+type ITranscriber =
+    abstract member Transcribe : audioBytes: byte array -> string
