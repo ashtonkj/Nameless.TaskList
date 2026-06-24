@@ -13,7 +13,8 @@ module Pipeline =
           Embedder: IEmbedder
           TopK: int
           SimilarityFloor: float
-          Vision: IVision }
+          Vision: IVision
+          Transcriber: ITranscriber }
 
     type PipelineResult =
         | NotFound
@@ -135,20 +136,28 @@ module Pipeline =
                 Skipped
             else
 
-            // --- Step: image-only messages get a vision description before classify ---
-            let imageDerived, msg =
-                let isImageOnly =
-                    (not (isNull msg.MediaType)) && msg.MediaType = "image"
-                    && System.String.IsNullOrWhiteSpace msg.Content
-                if not isImageOnly then false, msg
+            // --- Step: image/audio messages get vision/transcription before classify ---
+            let enrich (mediaType: string) (extract: byte array -> string) (m: ChatMessage) =
+                let isTarget =
+                    (not (isNull m.MediaType)) && m.MediaType = mediaType
+                    && System.String.IsNullOrWhiteSpace m.Content
+                if not isTarget then false, m
                 else
-                    let described =
-                        match deps.Messages.GetMediaBytes(id, chatJid) with
-                        | Some bytes -> (try Some(deps.Vision.Describe bytes) with _ -> None)
-                        | None -> None
-                    match described with
-                    | Some t when not (System.String.IsNullOrWhiteSpace t) -> true, { msg with Content = t }
-                    | _ -> false, msg
+                    match deps.Messages.GetMediaBytes(id, chatJid) with
+                    | Some bytes ->
+                        (try
+                            match extract bytes with
+                            | t when not (System.String.IsNullOrWhiteSpace t) -> true, { m with Content = t }
+                            | _ -> false, m
+                         with _ -> false, m)
+                    | None -> false, m
+
+            let imageDerived, msg = enrich "image" deps.Vision.Describe msg
+            let audioDerived, msg = enrich "audio" deps.Transcriber.Transcribe msg
+            let mediaHeader =
+                if imageDerived then "## Image (vision-extracted)\n"
+                elif audioDerived then "## Voice note (transcribed)\n"
+                else "## Raw\n"
 
             // --- Step: classify (tool-enabled, may call get_contexts) ---
             let classifyTools = [ Tools.getContexts deps.Vault ]
@@ -164,7 +173,7 @@ module Pipeline =
                     { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                       Sender = msg.SenderName; Noise = true; Topic = ""
                       SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
-                let noiseBody = if imageDerived then "## Image (vision-extracted)\n" + msg.Content else ""
+                let noiseBody = if imageDerived || audioDerived then mediaHeader + msg.Content else ""
                 deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) noiseBody)
                 updateChannel deps msg channelSlug None
                 ProcessedNoise
@@ -412,7 +421,7 @@ module Pipeline =
                 { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                   Sender = msg.SenderName; Noise = false; Topic = topicPath
                   SpawnedTasks = Array.ofList taskPaths; SpawnedEvents = Array.ofList eventPaths; SpawnedNotes = Array.ofList notePaths; ProcessedBy = deps.Model }
-            let rawBody = (if imageDerived then "## Image (vision-extracted)\n" else "## Raw\n") + msg.Content
+            let rawBody = mediaHeader + msg.Content
             deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize messageRecord) rawBody)
 
             // --- Step: update the topic body (best-effort; logged warning on failure) ---

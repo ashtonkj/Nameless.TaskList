@@ -140,3 +140,22 @@ let ``OllamaVision posts the image to /api/chat and returns the description`` ()
         Assert.Equal("a birthday invite", text)
     finally
         listener.Stop()
+
+[<Fact>]
+let ``WhisperArgs.build emits core flags, output dir and the input name`` () =
+    let args = WhisperArgs.build "base" "" "audio.ogg" "/tmp/x"
+    Assert.Equal<string list>(
+        [ "audio.ogg"; "--model"; "base"; "--output_format"; "txt"
+          "--output_dir"; "/tmp/x"; "--fp16"; "False" ],
+        args)
+
+[<Fact>]
+let ``WhisperArgs.build omits --language when blank`` () =
+    let args = WhisperArgs.build "base" "   " "audio.ogg" "/tmp/x"
+    Assert.DoesNotContain("--language", args)
+
+[<Fact>]
+let ``WhisperArgs.build includes --language when set`` () =
+    let args = WhisperArgs.build "base" "en" "audio.ogg" "/tmp/x"
+    Assert.Contains("--language", args)
+    Assert.Contains("en", args)

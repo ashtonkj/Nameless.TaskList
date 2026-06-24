@@ -102,6 +102,48 @@ module Adapters =
                 let json = response.Content.ReadAsStringAsync().Result
                 (Response.parseResponse json).Message.Content
 
+    // ---- Transcription over the local Whisper CLI ----
+    // `--language` is included only when set, so an empty value lets Whisper
+    // auto-detect each note's language. Pure so it can be unit-tested without the binary.
+    module WhisperArgs =
+        let build (model: string) (language: string) (inputName: string) (outputDir: string) : string list =
+            [ inputName
+              "--model"; model
+              "--output_format"; "txt"
+              "--output_dir"; outputDir
+              "--fp16"; "False" ]
+            @ (if System.String.IsNullOrWhiteSpace language then [] else [ "--language"; language ])
+
+    type WhisperTranscriber(command: string, model: string, language: string, timeoutSeconds: int) =
+        interface ITranscriber with
+            member _.Transcribe(audioBytes) =
+                let workDir =
+                    Path.Combine(Path.GetTempPath(), "whisper-" + System.Guid.NewGuid().ToString("N"))
+                Directory.CreateDirectory(workDir) |> ignore
+                try
+                    let inputName = "audio.ogg"
+                    File.WriteAllBytes(Path.Combine(workDir, inputName), audioBytes)
+                    let psi = System.Diagnostics.ProcessStartInfo(command)
+                    WhisperArgs.build model language inputName workDir |> List.iter psi.ArgumentList.Add
+                    psi.WorkingDirectory <- workDir
+                    psi.RedirectStandardOutput <- true
+                    psi.RedirectStandardError <- true
+                    psi.UseShellExecute <- false
+                    use proc = System.Diagnostics.Process.Start(psi)
+                    // Read both streams async to avoid a full-pipe deadlock while we wait.
+                    let stdoutTask = proc.StandardOutput.ReadToEndAsync()
+                    let stderrTask = proc.StandardError.ReadToEndAsync()
+                    if not (proc.WaitForExit(timeoutSeconds * 1000)) then
+                        (try proc.Kill(true) with _ -> ())
+                        failwithf "whisper timed out after %d s" timeoutSeconds
+                    stdoutTask.Result |> ignore
+                    let stderr = stderrTask.Result
+                    if proc.ExitCode <> 0 then
+                        failwithf "whisper exited %d: %s" proc.ExitCode stderr
+                    File.ReadAllText(Path.Combine(workDir, "audio.txt")).Trim()
+                finally
+                    (try Directory.Delete(workDir, true) with _ -> ())
+
     // ---- Message source over Postgres ----
     let private getStringOrNull (reader: NpgsqlDataReader) (col: string) =
         let ord = reader.GetOrdinal(col)
