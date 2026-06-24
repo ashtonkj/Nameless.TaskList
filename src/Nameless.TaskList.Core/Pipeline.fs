@@ -159,10 +159,14 @@ module Pipeline =
                 elif audioDerived then "## Voice note (transcribed)\n"
                 else "## Raw\n"
 
+            // --- Step: pull recent conversation history for context (best-effort) ---
+            let recent = try deps.Messages.GetRecent(chatJid, msg.Timestamp, id) with _ -> []
+            let historyText = Prompts.renderHistory recent
+
             // --- Step: classify (tool-enabled, may call get_contexts) ---
             let classifyTools = [ Tools.getContexts deps.Vault ]
             let classifyReply =
-                Agent.runConversation deps.Chat classifyTools Prompts.classifySystem msg.Content
+                Agent.runConversation deps.Chat classifyTools Prompts.classifySystem (Prompts.classifyUser historyText msg.Content)
             match Prompts.parseClassification classifyReply with
             | Error e -> LlmError e
             | Ok classification ->
@@ -428,8 +432,8 @@ module Pipeline =
             (try
                 let existing = MarkdownFile.FromString (deps.Vault.Read topicPath)
                 let user =
-                    sprintf "Current topic body:\n%s\n\nNew message raw text:\n%s\n\nExtracted intent:\n%s"
-                        existing.Content msg.Content classification.Intent
+                    sprintf "Current topic body:\n%s\n\nRecent conversation (oldest to newest, for context):\n%s\n\nNew message raw text:\n%s\n\nExtracted intent:\n%s"
+                        existing.Content historyText msg.Content classification.Intent
                 let newBody = Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user
                 match existing.FrontMatter with
                 | Some fm ->
