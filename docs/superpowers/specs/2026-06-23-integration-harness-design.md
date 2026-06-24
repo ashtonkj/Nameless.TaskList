@@ -37,7 +37,7 @@ The unit suite proves the **logic** behind the ports with in-memory fakes; nothi
 `tests/Nameless.TaskList.IntegrationTests/Nameless.TaskList.IntegrationTests.fsproj`:
 - `TargetFramework` `net10.0`; `IsPackable` false.
 - `ProjectReference` → `src/Nameless.TaskList.Core/Nameless.TaskList.Core.fsproj` (adapters + pipeline live in Core; the host is not referenced).
-- Packages: `Microsoft.NET.Test.Sdk` 17.12.0, `xunit` 2.9.2, `xunit.runner.visualstudio` 2.8.2 (matching the existing test projects), `Xunit.SkippableFact` (latest 1.5.x, compatible with xunit 2.x), `Microsoft.Extensions.Configuration.Json` + `Microsoft.Extensions.Configuration.EnvironmentVariables` (for config loading). Npgsql comes transitively via the Core reference (the adapter uses it); the harness does not open raw Npgsql itself except in the probe.
+- Packages: `Microsoft.NET.Test.Sdk` 17.12.0, `xunit` 2.9.2, `xunit.runner.visualstudio` 2.8.2 (matching the existing test projects) — nothing else. xUnit 2.9.2 has built-in dynamic skipping (`Assert.SkipUnless`/`Assert.Skip`, since 2.8), so no third-party skip package is needed. Config is read directly from the host's `appsettings*.json` with `System.Text.Json` (BCL) — no configuration packages. Npgsql comes transitively via the Core `ProjectReference` (the probe uses `Npgsql.NpgsqlConnectionStringBuilder`/`NpgsqlConnection`); `System.Net.Http` and `System.Text.Json` are in the shared framework.
 - Added to `Nameless.TaskList.slnx` under the `/tests/` folder.
 
 ### 3.2 Exclusion from default `dotnet test`
@@ -69,7 +69,7 @@ A `ServiceProbes` module exposes cached booleans (computed once via `lazy`):
 - `whisper : bool` — resolve the configured whisper command and `ffmpeg` on PATH (probe by attempting to start `whisper --help` / `ffmpeg -version` and catching `Win32Exception`/file-not-found); true if both resolve.
 - `vault : bool` — always true.
 
-Each test is `[<SkippableFact>]` and begins with `Skip.IfNot(ServiceProbes.<svc>, "<svc> not reachable")`. Media tests (vision, whisper) require both their compute service **and** Postgres (they discover real rows), so they guard on both.
+Each test is a plain `[<Fact>]` and begins with `Assert.SkipUnless(ServiceProbes.<svc>.Value, "<svc> not reachable")` (xUnit 2.9.2 built-in dynamic skip); when no suitable real row exists, `Assert.Skip("<reason>")`. Media tests (vision, whisper) require both their compute service **and** Postgres (they discover real rows), so they guard on both.
 
 ---
 
