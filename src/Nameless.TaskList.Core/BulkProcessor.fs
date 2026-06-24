@@ -61,3 +61,8 @@ module BulkProcessor =
         let final = { j with Status = (if List.isEmpty rest then "done" else "cancelled") }
         onProgress final
         final
+
+    /// Persists the set of bulk jobs. Save rewrites the whole set; Load is best-effort.
+    type IJobStore =
+        abstract member Save : jobs: BulkJob list -> unit
+        abstract member Load : unit -> BulkJob list

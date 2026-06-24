@@ -23,6 +23,7 @@
         <Compile Include="AdapterWireTests.fs" />
         <Compile Include="SimilarityTests.fs" />
         <Compile Include="BulkProcessorTests.fs" />
+        <Compile Include="JobStoreTests.fs" />
     </ItemGroup>
 
     <ItemGroup>

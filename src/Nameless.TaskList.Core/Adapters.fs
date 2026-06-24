@@ -9,6 +9,7 @@ open System.Text.Json
 open Npgsql
 open Nameless.TaskList.Core.Conversation
 open Nameless.TaskList.Core.Ports
+open Nameless.TaskList.Core.BulkProcessor
 
 module Adapters =
 
@@ -36,6 +37,23 @@ module Adapters =
                     |> Array.map (fun p -> Path.GetRelativePath(root, p).Replace('\\', '/'))
                     |> List.ofArray
                 else []
+
+    // ---- Bulk-job store over a single JSON file on the local filesystem ----
+    type FileSystemJobStore(path: string) =
+        interface IJobStore with
+            member _.Save(jobs) =
+                let dir = Path.GetDirectoryName(path)
+                if not (String.IsNullOrEmpty dir) then Directory.CreateDirectory(dir) |> ignore
+                // F# list isn't natively STJ-serializable: persist as an array.
+                File.WriteAllText(path, JsonSerializer.Serialize(List.toArray jobs))
+            member _.Load() =
+                try
+                    if File.Exists path then
+                        match JsonSerializer.Deserialize<BulkJob[]>(File.ReadAllText path) with
+                        | null -> []
+                        | arr -> List.ofArray arr
+                    else []
+                with _ -> []
 
     // ---- Chat client over Ollama ----
     // NOTE: must NOT be `private`. System.Text.Json only serializes public types'
