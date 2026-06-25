@@ -122,7 +122,7 @@ relationships from past messages. No separate LLM backfill is built into `/reind
 
 `/reindex` stays LLM-free. Add a deterministic `renderRelationships` pass to `Indexer` that:
 
-- builds the human-readable index view (`relationships/_index.md`);
+- builds the human-readable index view (`relationships/index.md`, matching every other index and `loadAll`'s `index.md` skip filter);
 - drops edges whose referenced person files no longer exist (dangling-ref cleanup), consistent
   with how `loadAll` already skips unparseable files;
 - contributes a `Relationships` count to `IndexSummary`.
@@ -145,8 +145,8 @@ Both mirror the existing endpoint and `toHttp` mapping style in `ProcessMessage.
 
 ### Reindex view
 
-`relationships/_index.md`, grouped by person, each edge rendered as a wikilink with its relation
-and descriptor — browsable in Obsidian. Regenerable; written by `renderRelationships`.
+`relationships/index.md`, each edge rendered as a wikilink with its relation and descriptor —
+browsable in Obsidian. Regenerable; written by `renderRelationships`.
 
 ## 4. Testing
 
