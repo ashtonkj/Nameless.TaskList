@@ -181,7 +181,7 @@ module Pipeline =
             let historyText = Prompts.renderHistory recent
 
             // --- Step: classify (tool-enabled, may call get_contexts) ---
-            let classifyTools = [ Tools.getContexts deps.Vault ]
+            let classifyTools = [ Tools.getContexts deps.Vault; Tools.getPeople deps.Vault; Tools.getRelationships deps.Vault ]
             let classifyReply =
                 Agent.runConversation deps.Chat classifyTools Prompts.classifySystem (Prompts.classifyUser historyText msg.Content)
             match Prompts.parseClassification classifyReply with
@@ -533,6 +533,46 @@ module Pipeline =
                         let finalRecord = { record with Aliases = seededAliases }
                         deps.Vault.Write(Naming.personPath ctx canonicalSlug,
                                          MarkdownFile.ToString (Frontmatter.serialize finalRecord) body))
+
+            // --- Step: extract person-to-person relationships among resolved, co-mentioned people ---
+            (try
+                let relIndex = peopleIndex deps.Vault
+                let resolve (s: string) = resolvePerson relIndex s
+                let resolved =
+                    classification.PeopleMentioned
+                    |> Array.toList
+                    |> List.choose (fun name ->
+                        let s = Naming.slug name
+                        match resolve s with Some _ -> Some s | None -> None)
+                    |> List.distinct
+                if List.length resolved >= 2 then
+                    let user =
+                        sprintf "People mentioned (use these exact slugs for from/to): %s\nMessage: %s"
+                            (String.concat ", " resolved) msg.Content
+                    match Prompts.parseRelationships
+                              (Agent.runConversation deps.Chat [] Prompts.relationshipExtractSystem user) with
+                    | Ok extraction when not (isNull extraction.Relationships) ->
+                        for edge in extraction.Relationships do
+                            match Relationships.buildEdge resolve messagePath edge with
+                            | Some rel when Relationships.confidenceRank rel.Confidence >= 1 ->
+                                let path = Naming.relationshipPath rel.People.[0] rel.People.[1]
+                                let existing =
+                                    if deps.Vault.Exists path then
+                                        try
+                                            (MarkdownFile.FromString(deps.Vault.Read path)).FrontMatter
+                                            |> Option.map Frontmatter.deserialize<Relationship>
+                                        with _ -> None
+                                    else None
+                                match Relationships.reconcile existing rel with
+                                | Some toWrite ->
+                                    let body =
+                                        if System.String.IsNullOrWhiteSpace toWrite.Descriptor then toWrite.Title
+                                        else toWrite.Descriptor
+                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize toWrite) body)
+                                | None -> ()
+                            | _ -> ()
+                    | _ -> ()
+             with _ -> ())
 
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =
