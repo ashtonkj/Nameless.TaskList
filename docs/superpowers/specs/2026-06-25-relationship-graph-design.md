@@ -106,8 +106,12 @@ resolved** for the message:
   on bad model output).
 - Write edges with `confidence` of **high or medium**. Idempotent on the canonical path:
   - path does not exist → write the edge;
-  - path exists → best-effort reconcile: upgrade `relation`/`confidence` if the new edge is
-    higher-confidence, and record the new `source`.
+  - path exists → best-effort reconcile: overwrite (taking the new `relation`/`confidence`/
+    `descriptor`/`source`) only when the new edge is **strictly higher-confidence**; otherwise
+    leave the existing file untouched. Equal-or-lower confidence is a no-op, so re-processing the
+    same message — or a bulk-reprocess replay — produces byte-identical output (true idempotency).
+    The trade-off is that `source` is not refreshed on an equal-confidence re-mention; the earliest
+    high-confidence source is retained.
 
 This step is skipped entirely for messages with fewer than two resolved people, so the common
 case adds no LLM call.
