@@ -803,7 +803,7 @@ let ``two matching task intents in one message produce one updated task file`` (
     let taskCreate1 = Responses.final "---\ntype: Task\ntitle: Sign up for the club\nstatus: pending\npriority: medium\ndue: ''\ncontext:\n  - family\n---\nSign up for the club."
     // Second intent: vault now has the first task -> shortlist -> taskMatch=true (same slug) -> taskUpdate.
     let taskMatch2 = Responses.final """{"match":true,"topic_slug":"sign-up-for-the-club","confidence":0.9,"match_reason":"same action","new_topic_title":null}"""
-    let taskUpdate2 = Responses.final "Sign up / register for the club before the deadline."
+    let taskUpdate2 = Responses.final "---\ntype: Task\ntitle: Sign up for the club\nstatus: pending\npriority: high\ndue: 2026-07-01\ncontext:\n  - family\n---\nSign up / register for the club before the deadline."
     let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
     let chat = FakeChatClient([ classify; topicMatch; taskCreate1; taskMatch2; taskUpdate2; topicBody ])
     let d = { d with Chat = chat }
@@ -814,6 +814,8 @@ let ``two matching task intents in one message produce one updated task file`` (
         Assert.True(vault.Files.ContainsKey("tasks/pending/sign-up-for-the-club.md"))
         Assert.False(vault.Files.ContainsKey("tasks/pending/register-for-the-club.md"))
         Assert.Contains("register", vault.Files.["tasks/pending/sign-up-for-the-club.md"])
+        Assert.Contains("priority: high", vault.Files.["tasks/pending/sign-up-for-the-club.md"])   // raised, not downgraded
+        Assert.Contains("2026-07-01", vault.Files.["tasks/pending/sign-up-for-the-club.md"])        // due filled from new mention
     | other -> failwithf "expected Processed, got %A" other
 
 [<Fact>]

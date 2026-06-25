@@ -266,17 +266,22 @@ Rules:
 - A confidence below 0.6 should result in match: false.
 - Do not add explanation outside the JSON object."""
 
-    let taskUpdateSystem = """You are updating a task in a personal knowledge base.
-You are given the current task body and a new mention of the same action.
+    let taskUpdateSystem = """You are updating an existing task in a personal knowledge base, given the current task and a new mention of the SAME action.
 
-Rewrite the task body to fold in any new detail (e.g. a newly mentioned deadline or specifics).
-Keep it to 1-3 sentences. Preserve the original action.
+Produce the updated task as a COMPLETE markdown file (YAML frontmatter between --- fences, then body):
+- title: keep the existing action's title.
+- status: keep as "pending".
+- priority: critical/high/medium/low — reflect the urgency now evident.
+- due: an ISO 8601 date if a deadline is now known (from the existing task OR the new mention), else "".
+- context: array from [family, medical, school, finance, professional, personal-kb].
+- people: array of person slugs (use [] if none).
+- Body: 1-3 sentences folding in any new detail.
 
-Respond ONLY with the updated task body (no frontmatter, no explanation)."""
+Respond ONLY with the complete markdown file. No explanation."""
 
-    let taskUpdateUser (existingBody: string) (intent: string) (raw: string) : string =
-        sprintf "Current task body:\n%s\n\nNew mention (intent):\n%s\n\nSource message raw text:\n%s"
-            existingBody intent raw
+    let taskUpdateUser (existingFile: string) (intent: string) (raw: string) : string =
+        sprintf "Current task file:\n%s\n\nNew mention (intent):\n%s\n\nSource message raw text:\n%s"
+            existingFile intent raw
 
     let personMatchSystem = """You are a knowledge base assistant. Decide whether a newly mentioned person
 is the SAME individual as an existing person in the knowledge base, or a new person.

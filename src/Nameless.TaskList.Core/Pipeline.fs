@@ -397,19 +397,40 @@ module Pipeline =
                         | true, Some (slug, _, _, _) ->
                             let path = sprintf "tasks/pending/%s.md" slug
                             try
-                                let existing = MarkdownFile.FromString (deps.Vault.Read path)
+                                let existingRaw = deps.Vault.Read path
+                                let existing = MarkdownFile.FromString existingRaw
                                 match existing.FrontMatter with
                                 | Some fm ->
                                     let t = Frontmatter.deserialize<Task> fm
-                                    let mergedBody =
+                                    let updatedRaw =
                                         Agent.runConversation deps.Chat [] Prompts.taskUpdateSystem
-                                            (Prompts.taskUpdateUser existing.Content intent msg.Content)
+                                            (Prompts.taskUpdateUser existingRaw intent msg.Content)
                                         |> stripFences
+                                    // Parse the model's updated task; fall back to old record + raw body on failure.
+                                    let newRec, newBody =
+                                        try
+                                            let parsed = MarkdownFile.FromString updatedRaw
+                                            match parsed.FrontMatter with
+                                            | Some nfm -> Frontmatter.deserialize<Task> nfm, parsed.Content
+                                            | None -> t, updatedRaw
+                                        with _ -> t, updatedRaw
+                                    let prank (p: string) =
+                                        match (if isNull p then "" else p).ToLowerInvariant() with
+                                        | "critical" -> 3 | "high" -> 2 | "medium" -> 1 | "low" -> 0 | _ -> -1
+                                    let mergedDue =
+                                        if System.String.IsNullOrWhiteSpace t.Due
+                                           && not (System.String.IsNullOrWhiteSpace newRec.Due)
+                                        then newRec.Due else t.Due
+                                    let mergedPriority =
+                                        if prank newRec.Priority > prank t.Priority then newRec.Priority else t.Priority
                                     let merged =
                                         { t with
+                                            Due = mergedDue
+                                            Priority = mergedPriority
                                             Context = Array.append (if isNull t.Context then [||] else t.Context) classification.Contexts |> Array.distinct
-                                            People = Array.append (if isNull t.People then [||] else t.People) classification.PeopleMentioned |> Array.distinct }
-                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) mergedBody)
+                                            People = Array.append (if isNull t.People then [||] else t.People) classification.PeopleMentioned |> Array.distinct
+                                            SourceMessage = messagePath }
+                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) newBody)
                                     path
                                 | None -> createNewTask intent
                             with _ -> createNewTask intent
