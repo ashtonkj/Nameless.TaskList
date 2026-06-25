@@ -278,6 +278,26 @@ Respond ONLY with the updated task body (no frontmatter, no explanation)."""
         sprintf "Current task body:\n%s\n\nNew mention (intent):\n%s\n\nSource message raw text:\n%s"
             existingBody intent raw
 
+    let personMatchSystem = """You are a knowledge base assistant. Decide whether a newly mentioned person
+is the SAME individual as an existing person in the knowledge base, or a new person.
+
+You are given the new mention (name and context) and a list of candidate people (slug, title, role).
+Respond ONLY with a JSON object:
+
+{
+  "match": true/false,
+  "topic_slug": "slug of the matched person, or null if no match",
+  "confidence": 0.0,
+  "match_reason": "brief explanation",
+  "new_topic_title": "if match is false, null"
+}
+
+Rules:
+- Match only if it is clearly the same individual (e.g. "Teacher Nancy" and "Nancy" the teacher).
+- Do NOT match two different people who merely share a role or a first name.
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object."""
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 

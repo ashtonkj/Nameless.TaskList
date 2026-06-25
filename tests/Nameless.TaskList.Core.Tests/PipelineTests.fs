@@ -860,3 +860,75 @@ let ``first task in an empty vault skips the embedder and matcher`` () =
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) -> Assert.True(vault.Files.ContainsKey("tasks/pending/call-the-school.md"))
     | other -> failwithf "expected Processed, got %A" other
+
+// ── People fuzzy match-and-merge tests ─────────────────────────────────────
+
+[<Fact>]
+let ``a fuzzy-matched person mention adds an alias instead of a duplicate stub`` () =
+    let vault = FakeVault()
+    // Seed an existing person "Nancy".
+    vault.Seed("people/school/nancy.md", "---\ntype: Person\ntitle: Nancy\nrole: Teacher\naliases: []\n---\nEthan's teacher.")
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder   // constant => Nancy is shortlisted
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["school"],"intent":"note from teacher","action_required":false,"urgency":"low","people_mentioned":["Teacher Nancy"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"School note"}"""
+    // people step: "teacher-nancy" does not exact-resolve -> fuzzy shortlist -> personMatch=true (nancy).
+    let personMatch = Responses.final """{"match":true,"topic_slug":"nancy","confidence":0.9,"match_reason":"same person","new_topic_title":null}"""
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personMatch; topicBody ])
+    let d =
+        { Messages = FakeMessages(Some(sampleMessage ())); Vault = vault :> IVault
+          Chat = chat; Model = "test-model"; Embedder = embedder
+          TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+          TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.35
+          Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let peopleFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> List.ofSeq
+        Assert.Equal(1, peopleFiles.Length)                                  // no new stub
+        Assert.Contains("Teacher Nancy", vault.Files.["people/school/nancy.md"])  // alias added
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``a different person still creates a separate stub`` () =
+    let vault = FakeVault()
+    vault.Seed("people/school/nancy.md", "---\ntype: Person\ntitle: Nancy\nrole: Teacher\naliases: []\n---\nTeacher.")
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"call dad","action_required":false,"urgency":"low","people_mentioned":["Trevor"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Call"}"""
+    let personMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"different person","new_topic_title":null}"""
+    let personStub = Responses.final "---\ntype: Person\ntitle: Trevor\nrole: ''\ncontext:\n  - family\naliases: []\n---\nTrevor."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; personMatch; personStub; topicBody ])
+    let d =
+        { Messages = FakeMessages(Some(sampleMessage ())); Vault = vault :> IVault
+          Chat = chat; Model = "test-model"; Embedder = embedder
+          TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+          TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.35
+          Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        Assert.True(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("people/") && k.Contains("trevor")))
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``a mention that exactly resolves skips the fuzzy matcher`` () =
+    let vault = FakeVault()
+    vault.Seed("people/school/nancy.md", "---\ntype: Person\ntitle: Nancy\nrole: Teacher\naliases: []\n---\nTeacher.")
+    // Embedder throws if the fuzzy path runs; an exact resolve must short-circuit before it.
+    let embedder = FakeEmbedder(fun _ -> failwith "embedder must not be called") :> IEmbedder
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["school"],"intent":"note","action_required":false,"urgency":"low","people_mentioned":["Nancy"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Note"}"""
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; topicBody ])
+    let d =
+        { Messages = FakeMessages(Some(sampleMessage ())); Vault = vault :> IVault
+          Chat = chat; Model = "test-model"; Embedder = embedder
+          TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+          TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.35
+          Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) -> Assert.Equal(1, vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> Seq.length)
+    | other -> failwithf "expected Processed, got %A" other
