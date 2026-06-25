@@ -167,6 +167,18 @@ type Person =
       Aliases: string array }
 
 [<CLIMutable>]
+type Relationship =
+    { Type: string
+      Title: string
+      From: string
+      To: string
+      Relation: string
+      Descriptor: string
+      Confidence: string
+      People: string array
+      Source: string }
+
+[<CLIMutable>]
 type Digest =
     { Type: string
       Title: string
@@ -230,6 +242,11 @@ module Naming =
 
     let personPath (context: string) (personSlug: string) : string =
         sprintf "people/%s/%s.md" context personSlug
+
+    let relationshipPath (slugA: string) (slugB: string) : string =
+        let a, b =
+            if System.String.CompareOrdinal(slugA, slugB) <= 0 then slugA, slugB else slugB, slugA
+        sprintf "relationships/%s-%s.md" a b
 
     let channelPath (channelSlug: string) : string =
         sprintf "channels/whatsapp/%s.md" channelSlug

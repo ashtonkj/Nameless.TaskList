@@ -52,3 +52,11 @@ let ``digestPath is dated and kinded`` () =
     let d = System.DateTime(2026, 6, 23)
     Assert.Equal("digests/2026-06-23-daily.md", Naming.digestPath d "daily")
     Assert.Equal("digests/2026-06-23-weekly.md", Naming.digestPath d "weekly")
+
+[<Fact>]
+let ``relationshipPath orders slugs alphabetically`` () =
+    Assert.Equal("relationships/dr-naidoo-ethan.md", Naming.relationshipPath "dr-naidoo" "ethan")
+
+[<Fact>]
+let ``relationshipPath is order-independent`` () =
+    Assert.Equal(Naming.relationshipPath "ethan" "dr-naidoo", Naming.relationshipPath "dr-naidoo" "ethan")
