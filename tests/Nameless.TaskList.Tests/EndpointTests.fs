@@ -50,7 +50,7 @@ let private statusOfResult (r: IResult) : int =
 [<Fact>]
 let ``reindex summary maps to 200`` () =
     let summary : Nameless.TaskList.Core.Indexer.IndexSummary =
-        { Tasks = 2; Topics = 1; Events = 0; Commitments = 0; Notes = 0; People = 0; Channels = 1; Skipped = 0 }
+        { Tasks = 2; Topics = 1; Events = 0; Commitments = 0; Notes = 0; People = 0; Channels = 1; Relationships = 0; Skipped = 0 }
     Assert.Equal(200, statusOfResult (ReindexHandler.toHttp summary))
 
 [<Fact>]
