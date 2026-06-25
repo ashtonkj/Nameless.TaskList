@@ -63,9 +63,15 @@ module Program =
             let floor = match System.Double.TryParse(cfg.["TopicMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.35
             let noteTopK = match System.Int32.TryParse(cfg.["NoteMatch:TopK"]) with | true, v -> v | _ -> 5
             let noteFloor = match System.Double.TryParse(cfg.["NoteMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.35
+            let taskTopK = match System.Int32.TryParse(cfg.["TaskMatch:TopK"]) with | true, v -> v | _ -> 5
+            let taskFloor = match System.Double.TryParse(cfg.["TaskMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.35
+            let peopleTopK = match System.Int32.TryParse(cfg.["PeopleMatch:TopK"]) with | true, v -> v | _ -> 5
+            let peopleFloor = match System.Double.TryParse(cfg.["PeopleMatch:SimilarityFloor"]) with | true, v -> v | _ -> 0.35
             { Messages = messages; Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]
               Embedder = embedder; TopK = topK; SimilarityFloor = floor
               NoteTopK = noteTopK; NoteSimilarityFloor = noteFloor
+              TaskTopK = taskTopK; TaskSimilarityFloor = taskFloor
+              PeopleTopK = peopleTopK; PeopleSimilarityFloor = peopleFloor
               Vision = vision; Transcriber = transcriber }
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, ITranscriber, Microsoft.AspNetCore.Http.IResult>(

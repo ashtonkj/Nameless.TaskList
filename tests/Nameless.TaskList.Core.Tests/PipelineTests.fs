@@ -32,7 +32,7 @@ let sampleMessage () : ChatMessage =
 let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = FakeEmbedder(fun _ -> failwith "no embedder configured") :> IEmbedder
-      TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+      TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
 
@@ -293,7 +293,7 @@ let ``image-only message is described by vision and processed as that text`` () 
     let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy; 3uy |]) :> IMessageSource
     let vision = FakeVision(fun _ -> "INVITE: Ethan's party Saturday 2pm, please RSVP") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -311,7 +311,7 @@ let ``image-only message falls back to noise when vision fails`` () =
     let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy |]) :> IMessageSource
     let vision = FakeVision(fun _ -> failwith "vision down") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     // vision throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
@@ -325,7 +325,7 @@ let ``vision-derived noise preserves the text`` () =
     let messages = FakeMessages(Some(imageMessage ()), [| 1uy; 2uy; 3uy |]) :> IMessageSource
     let vision = FakeVision(fun _ -> "SCREENSHOT: random meme text") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -345,7 +345,7 @@ let ``GetMediaBytes=None falls back to noise`` () =
     let messages = FakeMessages(Some(imageMessage ())) :> IMessageSource
     let vision = FakeVision(fun _ -> failwith "should not be called") :> IVision
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
               Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
     // GetMediaBytes returns None -> vision is not called -> content stays empty -> classify (scripted noise) -> ProcessedNoise
@@ -365,7 +365,7 @@ let ``voice-note is transcribed and processed as that text`` () =
     let messages = FakeMessages(Some(audioMessage ()), [| 9uy; 8uy; 7uy |]) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> "Please RSVP to Ethan's party on Saturday at 2pm") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -383,7 +383,7 @@ let ``voice-note falls back to noise when transcription fails`` () =
     let messages = FakeMessages(Some(audioMessage ()), [| 1uy; 2uy |]) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> failwith "whisper down") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     // transcription throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
@@ -397,7 +397,7 @@ let ``transcribed noise preserves the text`` () =
     let messages = FakeMessages(Some(audioMessage ()), [| 3uy; 2uy; 1uy |]) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> "just saying hi, talk later") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     match Pipeline.processMessage d "M1" "jid" with
@@ -417,7 +417,7 @@ let ``audio GetMediaBytes=None falls back to noise`` () =
     let messages = FakeMessages(Some(audioMessage ())) :> IMessageSource
     let transcriber = FakeTranscriber(fun _ -> failwith "should not be called") :> ITranscriber
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+              Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
               Transcriber = transcriber }
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
@@ -427,7 +427,7 @@ let ``audio GetMediaBytes=None falls back to noise`` () =
 let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (topK: int) (floor: float) : PipelineDeps =
     { Messages = FakeMessages(Some(sampleMessage ())) :> IMessageSource
       Vault = vault :> IVault; Chat = chat; Model = "test-model"
-      Embedder = embedder; TopK = topK; SimilarityFloor = floor; NoteTopK = 5; NoteSimilarityFloor = 0.5
+      Embedder = embedder; TopK = topK; SimilarityFloor = floor; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
 
@@ -572,7 +572,7 @@ let private personMessage () : ChatMessage =
 
 let private personDeps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : PipelineDeps =
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
-      Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+      Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
 
@@ -659,6 +659,7 @@ let private noteDeps (messages: IMessageSource) (vault: FakeVault) (chat: IChatC
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder   // constant vector => cosine 1.0, always shortlisted
       TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.35
+      TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
       Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
 

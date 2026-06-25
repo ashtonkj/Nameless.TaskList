@@ -15,6 +15,10 @@ module Pipeline =
           SimilarityFloor: float
           NoteTopK: int
           NoteSimilarityFloor: float
+          TaskTopK: int
+          TaskSimilarityFloor: float
+          PeopleTopK: int
+          PeopleSimilarityFloor: float
           Vision: IVision
           Transcriber: ITranscriber }
 
