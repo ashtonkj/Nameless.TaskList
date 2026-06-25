@@ -13,6 +13,7 @@
         <Compile Include="Tools.fs" />
         <Compile Include="Agent.fs" />
         <Compile Include="Prompts.fs" />
+        <Compile Include="Relationships.fs" />
         <Compile Include="Similarity.fs" />
         <Compile Include="Pipeline.fs" />
         <Compile Include="BulkProcessor.fs" />
