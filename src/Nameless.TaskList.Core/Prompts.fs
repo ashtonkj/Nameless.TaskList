@@ -155,7 +155,7 @@ A Note is a DURABLE, evolving reference document for facts that stay useful acro
 (e.g. account numbers, contact details, medical records, standing preferences) — not a per-message log.
 
 Rules:
-- title: short noun phrase naming the reference subject (e.g. "Medical aid details").
+- title: a SHORT noun-phrase LABEL naming the subject — at most ~6 words (e.g. "City Power contacts", "Medical aid details"). It is a label, NOT the fact itself: never put URLs, phone numbers, handles, or a list of details in the title — those belong only in the body.
 - context: array — choose from [family, medical, school, finance, professional, personal-kb].
 - tags: array of short lowercase tags (use [] if none).
 - Body: organise the fact under a short markdown section heading; include specifics (numbers, names, dates).
@@ -197,10 +197,12 @@ Use the person slugs EXACTLY as given for "from" and "to".
   sibling            (symmetric)
   partner            (symmetric)
   colleague          (symmetric)
-  friend             (symmetric)
-  other              (use only when none of the above fit)
+  friend             (symmetric — only a genuine friendship, NOT a family tie)
+  other              (anything else, INCLUDING family relationships not listed above —
+                      aunt/uncle, niece/nephew, cousin, grandparent, in-law; never force
+                      these into "friend". Put the specific tie in the descriptor.)
 
-"descriptor" is a short free-text detail (e.g. "paediatrician since 2022") or null.
+"descriptor" is a short free-text detail (e.g. "paediatrician since 2022", "uncle and niece") or null.
 "confidence" is one of: high, medium, low.
 
 Respond ONLY with a JSON object in this exact format:

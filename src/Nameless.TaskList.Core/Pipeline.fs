@@ -127,17 +127,38 @@ module Pipeline =
         { Prompt: string
           BuildUser: string -> string
           Interpret: string -> string -> EntityOutcome<'T>   // stripped reply, intent -> outcome
-          BasePath: 'T -> string }
+          BasePath: 'T -> string
+          TitleOf: 'T -> string }
+
+    // NOT private: YamlDotNet can't deserialize into a private record (see the
+    // fsharp-private-record-serialization lesson) — Title would come back null.
+    [<CLIMutable>]
+    type TitleOnly = { Title: string }
+
+    /// The slug of an existing entity file's frontmatter title (empty if missing/unparseable).
+    let private existingTitleSlug (vault: IVault) (path: string) : string =
+        try
+            match (MarkdownFile.FromString (vault.Read path)).FrontMatter with
+            | Some fm -> Naming.slug (Frontmatter.deserialize<TitleOnly> fm).Title
+            | None -> ""
+        with _ -> ""
 
     /// Run a per-type generation prompt for each intent: validate (or fall back),
-    /// canonicalize, collision-guard the path, write, and return the written paths.
+    /// canonicalize, write, and return the written paths. A same-slug collision with a file
+    /// of the same title is a re-extraction of the same entity → overwrite idempotently;
+    /// only a genuinely different entity that happens to slug-collide gets a -2 suffix.
     let private writeEntities (deps: PipelineDeps) (spec: EntitySpec<'T>) (intents: string list) : string list =
         intents
         |> List.map (fun intent ->
             let raw = Agent.runConversation deps.Chat [] spec.Prompt (spec.BuildUser intent)
             let outcome = spec.Interpret (stripFences raw) intent
             let text = MarkdownFile.ToString (Frontmatter.serialize outcome.Record) outcome.Body
-            let path = freePath deps.Vault (spec.BasePath outcome.Record)
+            let basePath = spec.BasePath outcome.Record
+            let newSlug = Naming.slug (spec.TitleOf outcome.Record)
+            let path =
+                if deps.Vault.Exists basePath && newSlug <> "" && existingTitleSlug deps.Vault basePath = newSlug
+                then basePath
+                else freePath deps.Vault basePath
             deps.Vault.Write(path, text)
             path)
 
@@ -175,6 +196,20 @@ module Pipeline =
                 if imageDerived then "## Image (vision-extracted)\n"
                 elif audioDerived then "## Voice note (transcribed)\n"
                 else "## Raw\n"
+
+            // --- Short-circuit: nothing to classify (e.g. caption-less video/document with no
+            //     vision/transcription text). Classifying empty input just makes the model chat
+            //     back ("Please provide the message..."), which fails to parse. Record as noise
+            //     and stop, before any LLM call. ---
+            if System.String.IsNullOrWhiteSpace msg.Content then
+                let record : Message =
+                    { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
+                      Sender = msg.SenderName; Noise = true; Topic = ""
+                      SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
+                deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) "")
+                updateChannel deps msg channelSlug None
+                ProcessedNoise
+            else
 
             // --- Step: pull recent conversation history for context (best-effort) ---
             let recent = try deps.Messages.GetRecent(chatJid, msg.Timestamp, id) with _ -> []
@@ -309,7 +344,8 @@ module Pipeline =
                                   Context = classification.Contexts; People = classification.PeopleMentioned
                                   Topic = topicPath; SourceMessage = messagePath }
                             { Record = fb; Body = intent })
-                  BasePath = (fun t -> Naming.taskPath t.Title) }
+                  BasePath = (fun t -> Naming.taskPath t.Title)
+                  TitleOf = (fun t -> t.Title) }
 
             let taskPaths = writeEntities deps taskSpec (List.ofArray classification.Entities.Tasks)
 
@@ -347,7 +383,8 @@ module Pipeline =
                                   Context = classification.Contexts; Location = ""; People = classification.PeopleMentioned
                                   Topic = topicPath; TasksLinked = Array.ofList taskPaths; ReminderDaysBefore = 3 }
                             { Record = fb; Body = intent + flag })
-                  BasePath = (fun e -> Naming.eventPath (parseWhen e.When msg.Timestamp) e.Title) }
+                  BasePath = (fun e -> Naming.eventPath (parseWhen e.When msg.Timestamp) e.Title)
+                  TitleOf = (fun e -> e.Title) }
 
             let eventPaths = writeEntities deps eventSpec (List.ofArray classification.Entities.Events)
 
@@ -377,7 +414,8 @@ module Pipeline =
                                   Context = classification.Contexts; Topic = topicPath
                                   TaskAssigned = ""; EscalateAfterDays = 7; SourceMessage = messagePath }
                             { Record = fb; Body = intent })
-                  BasePath = (fun c -> Naming.commitmentPath c.Title) }
+                  BasePath = (fun c -> Naming.commitmentPath c.Title)
+                  TitleOf = (fun c -> c.Title) }
 
             let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments)
             ignore commitmentPaths

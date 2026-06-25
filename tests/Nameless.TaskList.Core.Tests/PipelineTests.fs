@@ -53,6 +53,39 @@ let ``noise message writes a minimal message file and creates no task`` () =
     Assert.False(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("tasks/")))
 
 [<Fact>]
+let ``two identical task intents in one message produce exactly one task file`` () =
+    // Regression: writeEntities used freePath, so a re-extracted identical task created a
+    // tasks/pending/<slug>-2.md duplicate instead of overwriting the same-titled file.
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"sign up for the club","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":["Sign up for Holiday Club","Sign up for Holiday Club"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Holiday club"}"""
+    let taskFile = Responses.final "---\ntype: Task\ntitle: Sign up for Holiday Club\nstatus: pending\npriority: medium\ncontext:\n  - family\n---\nSign up for the club."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    // two task intents -> two taskFile generations, then the topic-update body
+    let chat = FakeChatClient([ classify; topicMatch; taskFile; taskFile; topicBody ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let taskFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("tasks/")) |> List.ofSeq
+        Assert.Equal(1, taskFiles.Length)   // exactly one task file — no -2.md duplicate
+        Assert.True(vault.Files.ContainsKey("tasks/pending/sign-up-for-holiday-club.md"))
+        Assert.False(vault.Files.ContainsKey("tasks/pending/sign-up-for-holiday-club-2.md"))
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``empty-content message (caption-less video) is noise with no LLM call`` () =
+    // Video/document with no caption yields no vision/transcription text; classifying empty
+    // input just makes the model chat back. Short-circuit to noise before any LLM call.
+    let vault = FakeVault()
+    let msg = { sampleMessage () with Content = ""; MediaType = "video" }
+    let chat = FakeChatClient([])   // empty queue: any classify call would throw
+    let d = deps (FakeMessages(Some msg)) vault chat
+    let result = Pipeline.processMessage d "M1" "jid"
+    Assert.Equal(ProcessedNoise, result)
+    Assert.Equal(0, chat.Calls)
+    Assert.True(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("messages/")))
+
+[<Fact>]
 let ``signal message creates topic, task, and message referencing them`` () =
     let vault = FakeVault()
     let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"call the venue about the party date","action_required":true,"urgency":"high","people_mentioned":["wife"],"entities":{"tasks":["Call Acrobranch to confirm the 19th"],"events":[],"commitments":[],"notes":[]}}"""
