@@ -185,7 +185,10 @@ module Pipeline =
             let classifyReply =
                 Agent.runConversation deps.Chat classifyTools Prompts.classifySystem (Prompts.classifyUser historyText msg.Content)
             match Prompts.parseClassification classifyReply with
-            | Error e -> LlmError e
+            | Error e ->
+                eprintfn "[classify-error] msg=%s chat=%s: %s\n  raw model output: %s"
+                    id chatJid e ((if isNull classifyReply then "<null>" else classifyReply.Trim()).Replace("\n", " "))
+                LlmError e
             | Ok classification ->
 
             if classification.Noise then
@@ -274,7 +277,9 @@ module Pipeline =
                         else Ok (createNewTopic m.NewTopicTitle)
 
             match topicOutcome with
-            | Error e -> LlmError e
+            | Error e ->
+                eprintfn "[topic-match-error] msg=%s chat=%s: %s" id chatJid e
+                LlmError e
             | Ok (_, topicPath) ->
 
             // --- Step: create task files via the shared entity writer ---

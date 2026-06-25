@@ -56,8 +56,13 @@ module BulkProcessor =
                 | Processed _ -> j <- { j with Processed = j.Processed + 1 }
                 | ProcessedNoise -> j <- { j with Noise = j.Noise + 1 }
                 | Skipped -> j <- { j with Skipped = j.Skipped + 1 }
-                | LlmError _ | NotFound -> j <- { j with Errors = j.Errors + 1 }
-             with _ -> j <- { j with Errors = j.Errors + 1 })
+                | LlmError _ -> j <- { j with Errors = j.Errors + 1 }
+                | NotFound ->
+                    eprintfn "[bulk-error] msg=%s chat=%s: NotFound (message missing from source)" m.Id m.ChatJid
+                    j <- { j with Errors = j.Errors + 1 }
+             with ex ->
+                eprintfn "[bulk-error] msg=%s chat=%s: unhandled %s: %s" m.Id m.ChatJid (ex.GetType().Name) ex.Message
+                j <- { j with Errors = j.Errors + 1 })
             onProgress j
         let final = { j with Status = (if List.isEmpty rest then "done" else "cancelled") }
         onProgress final

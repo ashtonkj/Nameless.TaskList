@@ -53,14 +53,14 @@ For each message, respond ONLY with a JSON object in this exact format:
 {
   "noise": true/false,
   "noise_reason": "string or null — brief reason if noise",
-  "contexts": ["array of matching contexts, or empty"],
+  "contexts": ["a flat list of matching context strings, e.g. \"professional\", \"family\" — never nested arrays; empty if none"],
   "intent": "string — one sentence describing what the message is about, or null if noise",
   "action_required": true/false,
   "urgency": "critical/high/medium/low/none",
-  "people_mentioned": ["array of person names or roles mentioned"],
+  "people_mentioned": ["only specific, identifiable INDIVIDUALS — a person's name, or a singular role pointing to one identifiable person (e.g. \"Ethan's class teacher\"). EXCLUDE generic groups or plurals (\"parents\", \"families\", \"class teachers\"), organizations/teams/units and their acronyms (e.g. \"AR\", \"JOC\", \"law enforcement\"), and pronouns or vague references (\"the client\", \"her\"). Empty array if none."],
   "entities": {
-    "tasks": ["brief description of any tasks implied"],
-    "events": ["brief description of any events mentioned with dates if present"],
+    "tasks": ["concrete action items the OWNER personally needs to do, each a single clear next step (e.g. \"Book Ethan's flu vaccine\", \"Pay school fees\"). Do NOT create tasks for operational/dispatch/situational activity, work others are handling, or generic \"monitor/review/follow up\" reactions to incident reports; and do not split one action into several near-duplicate tasks. Empty array if none."],
+    "events": ["only SCHEDULED or UPCOMING occurrences the owner would put on a calendar — appointments, meetings, planned activities, deadlines with a specific date/time. Do NOT create events for past incidents, situational/security/dispatch reports, alerts, or status updates of things that already happened; those belong to a topic, not the calendar. Empty array if none."],
     "commitments": ["brief description of any deadlines or obligations mentioned"],
     "notes": ["only DURABLE reference facts worth keeping long-term and across conversations — account/policy/membership numbers, addresses, contact details, medical records, standing preferences. Do NOT create notes for per-message observations, status updates, or anything specific to a single ongoing conversation; those belong to the topic. Empty array if none."]
   }
@@ -124,8 +124,10 @@ Generate the YAML frontmatter and a brief body for a new event file.
 
 Rules:
 - title: short noun phrase naming the occurrence
-- when: ISO 8601 datetime. The reference date of the source message is provided; resolve
-  relative dates ("next Friday", "the 20th") against it. If only a date is known, use 00:00 and set all_day: true.
+- when: ISO 8601 datetime WITH the +02:00 timezone offset (the KB's local timezone, SAST) —
+  e.g. "2026-06-22T10:00:00+02:00". Never use "Z"/UTC or a naive datetime without an offset.
+  The reference date of the source message is provided; resolve relative dates ("next Friday",
+  "the 20th") against it. If only a date is known, use 00:00:00+02:00 and set all_day: true.
 - all_day: true when no specific time was given, else false
 - context: array — choose from [family, medical, school, finance, professional, personal-kb]
 - location: a place name if mentioned, else ""
@@ -265,10 +267,40 @@ You may be given recent conversation history for context. Use it to interpret th
         if start >= 0 && stop > start then raw.Substring(start, stop - start + 1)
         else raw
 
+    /// Reads a JSON string array, tolerating the model's occasional malformations:
+    /// nested arrays (`[["professional"]]` → `["professional"]`) are flattened to any
+    /// depth, embedded objects are skipped, numbers are coerced to strings, and a bare
+    /// string or null is accepted in place of an array. Keeps the pipeline's "never throw
+    /// on bad model output" contract for every `string array` field across all parsers.
+    type private FlatStringArrayConverter() =
+        inherit JsonConverter<string array>()
+        override _.Read(reader, _typeToConvert, _options) =
+            let acc = ResizeArray<string>()
+            match reader.TokenType with
+            | JsonTokenType.Null -> ()
+            | JsonTokenType.String -> acc.Add(reader.GetString())
+            | JsonTokenType.StartArray ->
+                let mutable depth = 1
+                while depth > 0 && reader.Read() do
+                    match reader.TokenType with
+                    | JsonTokenType.StartArray -> depth <- depth + 1
+                    | JsonTokenType.EndArray -> depth <- depth - 1
+                    | JsonTokenType.String -> acc.Add(reader.GetString())
+                    | JsonTokenType.Number -> acc.Add(string (reader.GetDouble()))
+                    | JsonTokenType.StartObject -> reader.Skip()
+                    | _ -> ()
+            | _ -> reader.Skip()
+            acc.ToArray()
+        override _.Write(writer, value, _options) =
+            writer.WriteStartArray()
+            for s in value do writer.WriteStringValue(s)
+            writer.WriteEndArray()
+
     let private options =
         let o = JsonSerializerOptions(JsonSerializerDefaults.Web)
         o.PropertyNamingPolicy <- JsonNamingPolicy.SnakeCaseLower
         o.NumberHandling <- JsonNumberHandling.AllowReadingFromString
+        o.Converters.Add(FlatStringArrayConverter())
         o
 
     let private tryParse<'T> (raw: string) : Result<'T, string> =
