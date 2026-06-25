@@ -33,6 +33,38 @@ let ``parseClassification returns Error on garbage`` () =
     | Error _ -> ()
 
 [<Fact>]
+let ``parseClassification flattens a nested contexts array`` () =
+    // gemma4:e4b intermittently emits contexts as [["professional"]] instead of ["professional"].
+    let json = """{"noise":false,"noise_reason":null,"contexts":[["professional"]],
+                   "intent":"vehicle at the gate","action_required":true,"urgency":"high",
+                   "people_mentioned":[],"entities":{"tasks":[["investigate the vehicle"]],
+                   "events":[],"commitments":[],"notes":[]}}"""
+    match Prompts.parseClassification json with
+    | Ok c ->
+        Assert.Equal<string array>([| "professional" |], c.Contexts)
+        Assert.Equal<string array>([| "investigate the vehicle" |], c.Entities.Tasks)
+    | Error e -> failwith e
+
+[<Fact>]
+let ``parseClassification yields non-null arrays when the model omits keys`` () =
+    // gemma4:e4b sometimes omits keys entirely (here: people_mentioned, contexts, notes,
+    // and even the whole entities object). Omitted keys leave CLIMutable fields null, which
+    // the pipeline then dereferences with Array.toList -> NullReferenceException. The parser
+    // must normalise every array (and Entities) to non-null.
+    let json = """{"noise":false,"intent":"sunglasses to dr robbins","action_required":true,"urgency":"medium"}"""
+    match Prompts.parseClassification json with
+    | Ok c ->
+        Assert.NotNull(box c.Contexts)
+        Assert.NotNull(box c.PeopleMentioned)
+        Assert.NotNull(box c.Entities)
+        Assert.NotNull(box c.Entities.Tasks)
+        Assert.NotNull(box c.Entities.Notes)
+        // and they must be safe to enumerate (this is what the pipeline does)
+        Assert.Empty(c.PeopleMentioned |> Array.toList)
+        Assert.Empty(c.Entities.Notes |> Array.toList)
+    | Error e -> failwith e
+
+[<Fact>]
 let ``parseTopicMatch reads a match decision`` () =
     let json = """{"match":true,"topic_slug":"birthday","confidence":0.9,
                    "match_reason":"same subject","new_topic_title":null}"""
