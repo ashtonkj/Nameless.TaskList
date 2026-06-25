@@ -311,7 +311,28 @@ You may be given recent conversation history for context. Use it to interpret th
             else Ok value
         with ex -> Error(sprintf "Failed to parse model JSON: %s" ex.Message)
 
-    let parseClassification (raw: string) : Result<Classification, string> = tryParse<Classification> raw
+    let private nzArr (a: string array) = if obj.ReferenceEquals(a, null) then Array.empty else a
+
+    /// The model sometimes omits keys entirely; omitted keys leave CLIMutable array fields
+    /// (and the whole Entities object) null, which the pipeline then dereferences with
+    /// Array.toList. Coalesce every array and Entities to non-null at the parse boundary.
+    let private normalizeClassification (c: Classification) : Classification =
+        let e =
+            if obj.ReferenceEquals(c.Entities, null)
+            then { Tasks = [||]; Events = [||]; Commitments = [||]; Notes = [||] }
+            else c.Entities
+        { c with
+            Contexts = nzArr c.Contexts
+            PeopleMentioned = nzArr c.PeopleMentioned
+            Entities =
+                { e with
+                    Tasks = nzArr e.Tasks
+                    Events = nzArr e.Events
+                    Commitments = nzArr e.Commitments
+                    Notes = nzArr e.Notes } }
+
+    let parseClassification (raw: string) : Result<Classification, string> =
+        tryParse<Classification> raw |> Result.map normalizeClassification
     let parseTopicMatch (raw: string) : Result<TopicMatch, string> = tryParse<TopicMatch> raw
     let parseRelationships (raw: string) : Result<RelationshipExtraction, string> = tryParse<RelationshipExtraction> raw
 

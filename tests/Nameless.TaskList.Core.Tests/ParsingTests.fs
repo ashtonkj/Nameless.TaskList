@@ -46,6 +46,25 @@ let ``parseClassification flattens a nested contexts array`` () =
     | Error e -> failwith e
 
 [<Fact>]
+let ``parseClassification yields non-null arrays when the model omits keys`` () =
+    // gemma4:e4b sometimes omits keys entirely (here: people_mentioned, contexts, notes,
+    // and even the whole entities object). Omitted keys leave CLIMutable fields null, which
+    // the pipeline then dereferences with Array.toList -> NullReferenceException. The parser
+    // must normalise every array (and Entities) to non-null.
+    let json = """{"noise":false,"intent":"sunglasses to dr robbins","action_required":true,"urgency":"medium"}"""
+    match Prompts.parseClassification json with
+    | Ok c ->
+        Assert.NotNull(box c.Contexts)
+        Assert.NotNull(box c.PeopleMentioned)
+        Assert.NotNull(box c.Entities)
+        Assert.NotNull(box c.Entities.Tasks)
+        Assert.NotNull(box c.Entities.Notes)
+        // and they must be safe to enumerate (this is what the pipeline does)
+        Assert.Empty(c.PeopleMentioned |> Array.toList)
+        Assert.Empty(c.Entities.Notes |> Array.toList)
+    | Error e -> failwith e
+
+[<Fact>]
 let ``parseTopicMatch reads a match decision`` () =
     let json = """{"match":true,"topic_slug":"birthday","confidence":0.9,
                    "match_reason":"same subject","new_topic_title":null}"""
