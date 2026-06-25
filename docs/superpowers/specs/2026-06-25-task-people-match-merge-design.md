@@ -47,9 +47,12 @@ In the task-creation step, before writing a new task for an intent:
    Returns the matched slug. Reuses `parseTopicMatch` (the `Match`/`TopicSlug`/`Confidence`/
    `NewTopicTitle` DTO), exactly as notes do.
 3. **Resolve:**
-   - **Match → update in place:** rewrite the existing task file via a `taskUpdateSystem` merge
-     that refreshes `due`/`priority` from the new mention and may enrich the body; the file path
-     is unchanged. Append the source-message reference.
+   - **Match → update in place:** rewrite the existing task file via a `taskUpdateSystem` merge.
+     The model returns a full candidate task; the pipeline merges it **safely**: fill `due` only
+     when the existing task had none and the new mention supplies one (never blank/overwrite an
+     existing due); raise `priority` only **upward** by rank (critical>high>medium>low — never
+     downgrade, and a garbage priority can't win); merge `context`/`people` distinct; take the
+     new body; set `source_message` to the current message. The file path is unchanged.
    - **No match / parse Error / unreadable matched file → create new** (the current
      `writeEntities`/`freePath` path).
 4. **Re-scan per intent** (like notes) so a task written by an earlier intent in the same
