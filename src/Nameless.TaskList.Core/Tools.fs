@@ -3,6 +3,7 @@ namespace Nameless.TaskList.Core
 open System.Collections.Generic
 open Nameless.TaskList.Core.Conversation
 open Nameless.TaskList.Core.Ports
+open Nameless.TaskList.Core.KnowledgeBase
 
 type Tool =
     {
@@ -56,6 +57,26 @@ module Tools =
             "List known people in the knowledge base with their roles."
             (noParams ())
             (fun _ -> dumpDir vault "people")
+
+    let getRelationships (vault: IVault) : Tool =
+        define "get_relationships"
+            "List the known relationships for a person, given their slug (e.g. dr-naidoo)."
+            (oneStringParam "slug" "The person slug, e.g. dr-naidoo")
+            (fun args ->
+                let slug = Naming.slug (string args.["slug"])
+                let matches =
+                    vault.ListFilesRecursive "relationships"
+                    |> List.filter (fun p -> not (p.EndsWith("index.md")))
+                    |> List.filter (fun p ->
+                        try
+                            match (MarkdownFile.FromString(vault.Read p)).FrontMatter with
+                            | Some fm ->
+                                let r = Frontmatter.deserialize<Relationship> fm
+                                (not (isNull r.People)) && (r.People |> Array.exists (fun s -> Naming.slug s = slug))
+                            | None -> false
+                        with _ -> false)
+                if List.isEmpty matches then sprintf "No relationships found for '%s'." slug
+                else matches |> List.map (fun p -> sprintf "## %s\n%s" p (vault.Read p)) |> String.concat "\n\n")
 
     let names (tools: Tool list) : Set<string> =
         tools |> List.map (fun t -> t.Definition.Function.Name) |> Set.ofList

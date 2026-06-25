@@ -709,3 +709,43 @@ let ``two note intents in the same message about the same subject produce exactl
         Assert.False(vault.Files.ContainsKey("notes/medical-aid-details-2.md"))
         Assert.Contains("Classic", vault.Files.["notes/medical-aid-details.md"])   // merged content
     | other -> failwithf "expected Processed, got %A" other
+
+// ── Relationship extraction tests ───────────────────────────────────────────
+
+[<Fact>]
+let ``processMessage writes a relationship edge when two known people are co-mentioned`` () =
+    let vault = FakeVault()
+    // Seed two existing people so both mentions resolve; person-stub step skips them (no LLM call).
+    vault.Seed("people/family/ethan.md", "---\ntype: Person\ntitle: Ethan\n---\nbody")
+    vault.Seed("people/medical/dr-naidoo.md", "---\ntype: Person\ntitle: Dr Naidoo\n---\nbody")
+    // Two co-mentioned people with no entity intents — call order: classify, topicMatch, relationshipExtract, topicBody.
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["medical"],"intent":"doctor visit","action_required":false,"urgency":"low","people_mentioned":["Ethan","Dr Naidoo"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Doctor visit"}"""
+    let relationshipExtract = Responses.final """{"relationships":[{"from":"ethan","to":"dr-naidoo","relation":"patient-doctor","descriptor":"paeds","confidence":"high"}]}"""
+    let topicBody = Responses.final "## Current understanding\nEthan saw Dr Naidoo.\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; relationshipExtract; topicBody ])
+    let d = personDeps (FakeMessages(Some(personMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        // Canonical alphabetical path: dr-naidoo before ethan
+        Assert.True(vault.Files.ContainsKey("relationships/dr-naidoo-ethan.md"))
+        Assert.Contains("relation: patient-doctor", vault.Files.["relationships/dr-naidoo-ethan.md"])
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``processMessage writes no relationship edge when only one person resolves`` () =
+    let vault = FakeVault()
+    // Seed only ONE existing person file so only one mention resolves.
+    vault.Seed("people/family/ethan.md", "---\ntype: Person\ntitle: Ethan\n---\nbody")
+    // One person mentioned with no entity intents — call order: classify, topicMatch, topicBody (no relationship step).
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"about ethan","action_required":false,"urgency":"low","people_mentioned":["Ethan"],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Ethan note"}"""
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    // Only 3 responses scripted; no relationshipExtract response because the step must not fire.
+    let chat = FakeChatClient([ classify; topicMatch; topicBody ])
+    let d = personDeps (FakeMessages(Some(personMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        // Assert no relationship file was written
+        Assert.False(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("relationships/")))
+    | other -> failwithf "expected Processed, got %A" other

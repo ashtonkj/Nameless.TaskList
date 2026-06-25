@@ -84,3 +84,22 @@ let ``regenerate writes notes and people indexes and full counts`` () =
     Assert.Equal(1, s.Commitments)
     Assert.Equal(1, s.Notes)
     Assert.Equal(1, s.People)
+
+[<Fact>]
+let ``regenerate writes a relationship index and drops dangling edges`` () =
+    let v = FakeVault()
+    v.Seed("people/family/ethan.md", "---\ntype: Person\ntitle: Ethan\n---\nbody")
+    v.Seed("people/medical/dr-naidoo.md", "---\ntype: Person\ntitle: Dr Naidoo\n---\nbody")
+    // live edge: both endpoints exist
+    v.Seed("relationships/dr-naidoo-ethan.md",
+           "---\ntype: Relationship\ntitle: Ethan ↔ Dr Naidoo\nfrom: people/family/ethan.md\nto: people/medical/dr-naidoo.md\nrelation: patient-doctor\ndescriptor: paeds\nconfidence: high\npeople:\n  - ethan\n  - dr-naidoo\nsource: messages/x.md\n---\nbody")
+    // dangling edge: 'ghost' person file does not exist
+    v.Seed("relationships/ethan-ghost.md",
+           "---\ntype: Relationship\ntitle: Ethan ↔ Ghost\nfrom: people/family/ethan.md\nto: people/family/ghost.md\nrelation: friend\ndescriptor: ''\nconfidence: high\npeople:\n  - ethan\n  - ghost\nsource: messages/y.md\n---\nbody")
+    let s = Indexer.regenerate (v :> IVault)
+    Assert.Equal(1, s.Relationships)   // dangling edge dropped from count
+    let idx = v.Files.["relationships/index.md"]
+    Assert.Contains("type: Index", idx)
+    Assert.Contains("title: Relationship Index", idx)
+    Assert.Contains("[[relationships/dr-naidoo-ethan]]", idx)
+    Assert.DoesNotContain("[[relationships/ethan-ghost]]", idx)

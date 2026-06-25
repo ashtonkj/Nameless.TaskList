@@ -1160,7 +1160,7 @@ Stale topics (no activity in 14+ days):
 ## 9. Open Questions & Future Work
 
 - **Embedding-based topic matching:** Replace LLM topic matching with a vector similarity step using a local embedding model (e.g. nomic-embed-text via Ollama) for better performance at scale.
-- **Relationship graph:** A `relationships/` directory mapping explicit person-to-person relationships (e.g. `ethan-dr-naidoo: patient-doctor`) to support relational queries.
+- **Relationship graph:** *(first increment delivered 2026-06-25)* A `relationships/` directory of one-file-per-edge person-to-person relationships — a typed enum (`parent-child`/`patient-doctor`/`student-teacher`/`sibling`/`partner`/`colleague`/`friend`/`other`) plus a free-form descriptor, keyed idempotently on a canonical alphabetical `{slug-a}-{slug-b}.md` filename. Captured inline by the pipeline (a best-effort LLM step that fires when ≥2 co-mentioned people resolve to existing person files), reconciled by `/reindex` (LLM-free; drops dangling edges), and queryable via the `get_relationships` tool and `GET /relationships[/{slug}]`. Remaining: multiple typed edges per pair, person↔org/location edges, relationship strength.
 - **Voice note ingestion:** Whisper (local) → transcript → same pipeline as WhatsApp text.
 - **Calendar sync:** Events in `events/` bidirectionally synced with a local CalDAV server.
 - **Archive policy:** Messages older than 90 days move to `messages/archive/{year}/`. Topics resolved more than 6 months ago move to `topics/archive/`.

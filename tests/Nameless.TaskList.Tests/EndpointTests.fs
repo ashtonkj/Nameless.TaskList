@@ -9,6 +9,22 @@ open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Xunit
+open System.Collections.Generic
+
+/// Inline vault fake — same logic as Core.Tests Fakes.FakeVault (prefix-based list).
+type private FakeVault() =
+    let files = Dictionary<string, string>()
+    member _.Seed(path: string, content: string) = files.[path] <- content
+    interface IVault with
+        member _.Exists(relPath) = files.ContainsKey(relPath)
+        member _.Read(relPath) = files.[relPath]
+        member _.Write(relPath, content) = files.[relPath] <- content
+        member _.ListFiles(relDir) =
+            let prefix = relDir.TrimEnd('/') + "/"
+            files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
+        member _.ListFilesRecursive(relDir) =
+            let prefix = relDir.TrimEnd('/') + "/"
+            files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
 
 // Verifies the result-to-HTTP mapping (spec §8.2) without a live host.
 // ASP.NET 10's IResult.ExecuteAsync requires RequestServices with logging + routing.
@@ -50,7 +66,7 @@ let private statusOfResult (r: IResult) : int =
 [<Fact>]
 let ``reindex summary maps to 200`` () =
     let summary : Nameless.TaskList.Core.Indexer.IndexSummary =
-        { Tasks = 2; Topics = 1; Events = 0; Commitments = 0; Notes = 0; People = 0; Channels = 1; Skipped = 0 }
+        { Tasks = 2; Topics = 1; Events = 0; Commitments = 0; Notes = 0; People = 0; Channels = 1; Relationships = 0; Skipped = 0 }
     Assert.Equal(200, statusOfResult (ReindexHandler.toHttp summary))
 
 [<Fact>]
@@ -194,3 +210,12 @@ let ``bulk cancel outcomes map to 200/404/409`` () =
     Assert.Equal(200, statusOfResult (BulkHandler.cancelToHttp Cancelled))
     Assert.Equal(404, statusOfResult (BulkHandler.cancelToHttp UnknownJob))
     Assert.Equal(409, statusOfResult (BulkHandler.cancelToHttp AlreadyTerminal))
+
+[<Fact>]
+let ``relationships endpoints return 200`` () =
+    let v = FakeVault()
+    v.Seed("relationships/dr-naidoo-ethan.md",
+           "---\ntype: Relationship\ntitle: Ethan ↔ Dr Naidoo\nfrom: people/family/ethan.md\nto: people/medical/dr-naidoo.md\nrelation: patient-doctor\ndescriptor: ''\nconfidence: high\npeople:\n  - ethan\n  - dr-naidoo\nsource: messages/x.md\n---\nbody")
+    Assert.Equal(200, statusOfResult (RelationshipsHandler.allToHttp (v :> IVault)))
+    Assert.Equal(200, statusOfResult (RelationshipsHandler.forPersonToHttp (v :> IVault) "ethan"))
+    Assert.Equal(200, statusOfResult (RelationshipsHandler.forPersonToHttp (v :> IVault) "nobody"))

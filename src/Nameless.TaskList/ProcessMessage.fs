@@ -119,6 +119,32 @@ module BulkJobs =
                     persist ())
                 runJob messages processOne latest
 
+module RelationshipsHandler =
+    open Nameless.TaskList.Core
+    open Nameless.TaskList.Core.KnowledgeBase
+    open Nameless.TaskList.Core.Ports
+
+    /// All live, parseable relationship edges (index.md excluded).
+    let loadEdges (vault: IVault) : Relationship list =
+        vault.ListFilesRecursive "relationships"
+        |> List.filter (fun p -> not (p.EndsWith("index.md")))
+        |> List.choose (fun p ->
+            try
+                match (MarkdownFile.FromString(vault.Read p)).FrontMatter with
+                | Some fm -> Some(Frontmatter.deserialize<Relationship> fm)
+                | None -> None
+            with _ -> None)
+
+    let private hasPerson (slug: string) (r: Relationship) =
+        (not (isNull r.People)) && (r.People |> Array.exists (fun s -> Naming.slug s = slug))
+
+    let allToHttp (vault: IVault) : IResult =
+        Results.Ok(box (loadEdges vault))
+
+    let forPersonToHttp (vault: IVault) (slug: string) : IResult =
+        let s = Naming.slug slug
+        Results.Ok(box (loadEdges vault |> List.filter (hasPerson s)))
+
 module BulkHandler =
     let startToHttp (r: Result<string, string>) : IResult =
         match r with

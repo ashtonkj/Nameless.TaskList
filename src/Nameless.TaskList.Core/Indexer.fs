@@ -8,7 +8,7 @@ module Indexer =
 
     type IndexSummary =
         { Tasks: int; Topics: int; Events: int; Commitments: int
-          Notes: int; People: int; Channels: int; Skipped: int }
+          Notes: int; People: int; Channels: int; Relationships: int; Skipped: int }
 
     // NOTE: must NOT be `private`. YamlDotNet (like System.Text.Json) only serializes
     // public types' members, so a private record serializes to `{}` — index files would
@@ -165,6 +165,17 @@ module Indexer =
         writeIndex vault "people" "People Index" (sb.ToString().TrimEnd())
         List.length items, skipped
 
+    let private renderRelationships (vault: IVault) : int * int =
+        let items, skipped = loadAll<Relationship> vault "relationships"
+        let exists (p: string) = not (System.String.IsNullOrWhiteSpace p) && vault.Exists p
+        let live = items |> List.filter (fun (_, r) -> exists r.From && exists r.To)
+        let sb = StringBuilder()
+        for (path, r) in live |> List.sortBy fst do
+            let desc = if System.String.IsNullOrWhiteSpace r.Descriptor then "" else sprintf " (%s)" r.Descriptor
+            sb.AppendLine(sprintf "- %s — %s%s" (wikilink path) (nz r.Relation) desc) |> ignore
+        writeIndex vault "relationships" "Relationship Index" (sb.ToString().TrimEnd())
+        List.length live, skipped
+
     let regenerate (vault: IVault) : IndexSummary =
         let tCount, tSkip = renderTasks vault
         let topCount, topSkip = renderTopics vault
@@ -173,6 +184,7 @@ module Indexer =
         let nCount, nSkip = renderNotes vault
         let pCount, pSkip = renderPeople vault
         let chCount, chSkip = renderChannels vault
+        let relCount, relSkip = renderRelationships vault
         { Tasks = tCount; Topics = topCount; Events = evCount; Commitments = cmCount
-          Notes = nCount; People = pCount; Channels = chCount
-          Skipped = tSkip + topSkip + evSkip + cmSkip + nSkip + pSkip + chSkip }
+          Notes = nCount; People = pCount; Channels = chCount; Relationships = relCount
+          Skipped = tSkip + topSkip + evSkip + cmSkip + nSkip + pSkip + chSkip + relSkip }
