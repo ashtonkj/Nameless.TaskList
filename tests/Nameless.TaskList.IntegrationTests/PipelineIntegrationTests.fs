@@ -28,6 +28,10 @@ let ``end-to-end processMessage against live services writes a message file`` ()
                   SimilarityFloor = 0.5
                   NoteTopK = 5
                   NoteSimilarityFloor = 0.35
+                  TaskTopK = 5
+                  TaskSimilarityFloor = 0.5
+                  PeopleTopK = 5
+                  PeopleSimilarityFloor = 0.5
                   Vision = OllamaVision(http, Config.ollamaUrl, Config.visionModel) :> IVision
                   Transcriber =
                     WhisperTranscriber(Config.whisperCommand, Config.whisperModel, Config.whisperLanguage, Config.whisperTimeout)

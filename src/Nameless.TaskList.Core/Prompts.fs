@@ -246,6 +246,63 @@ Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
         sprintf "Current note body:\n%s\n\nNew fact (intent):\n%s\n\nSource message raw text:\n%s"
             existingBody intent raw
 
+    let taskMatchSystem = """You are a knowledge base assistant. Decide whether a new task intent is the
+SAME action as an existing pending task, or a genuinely new task.
+
+You are given the new task intent and a list of candidate tasks (slug, title, summary).
+Respond ONLY with a JSON object:
+
+{
+  "match": true/false,
+  "topic_slug": "slug of the matched task, or null if no match",
+  "confidence": 0.0,
+  "match_reason": "brief explanation",
+  "new_topic_title": "if match is false, a concise title for the new task, else null"
+}
+
+Rules:
+- Match ONLY when it is the same action restated (e.g. "Sign up for X" = "Register for X").
+- Do NOT match merely related actions toward the same goal (e.g. "buy a mattress" vs "research mattresses" are DIFFERENT tasks).
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object."""
+
+    let taskUpdateSystem = """You are updating an existing task in a personal knowledge base, given the current task and a new mention of the SAME action.
+
+Produce the updated task as a COMPLETE markdown file (YAML frontmatter between --- fences, then body):
+- title: keep the existing action's title.
+- status: keep as "pending".
+- priority: critical/high/medium/low — reflect the urgency now evident.
+- due: an ISO 8601 date if a deadline is now known (from the existing task OR the new mention), else "".
+- context: array from [family, medical, school, finance, professional, personal-kb].
+- people: array of person slugs (use [] if none).
+- Body: 1-3 sentences folding in any new detail.
+
+Respond ONLY with the complete markdown file. No explanation."""
+
+    let taskUpdateUser (existingFile: string) (intent: string) (raw: string) : string =
+        sprintf "Current task file:\n%s\n\nNew mention (intent):\n%s\n\nSource message raw text:\n%s"
+            existingFile intent raw
+
+    let personMatchSystem = """You are a knowledge base assistant. Decide whether a newly mentioned person
+is the SAME individual as an existing person in the knowledge base, or a new person.
+
+You are given the new mention (name and context) and a list of candidate people (slug, title, role).
+Respond ONLY with a JSON object:
+
+{
+  "match": true/false,
+  "topic_slug": "slug of the matched person, or null if no match",
+  "confidence": 0.0,
+  "match_reason": "brief explanation",
+  "new_topic_title": "if match is false, null"
+}
+
+Rules:
+- Match only if it is clearly the same individual (e.g. "Teacher Nancy" and "Nancy" the teacher).
+- Do NOT match two different people who merely share a role or a first name.
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object."""
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 

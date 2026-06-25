@@ -15,6 +15,10 @@ module Pipeline =
           SimilarityFloor: float
           NoteTopK: int
           NoteSimilarityFloor: float
+          TaskTopK: int
+          TaskSimilarityFloor: float
+          PeopleTopK: int
+          PeopleSimilarityFloor: float
           Vision: IVision
           Transcriber: ITranscriber }
 
@@ -347,7 +351,93 @@ module Pipeline =
                   BasePath = (fun t -> Naming.taskPath t.Title)
                   TitleOf = (fun t -> t.Title) }
 
-            let taskPaths = writeEntities deps taskSpec (List.ofArray classification.Entities.Tasks)
+            let createNewTask (intent: string) : string =
+                writeEntities deps taskSpec [ intent ] |> List.head
+
+            let processTask (intent: string) : string =
+                // Re-scan pending tasks each call so a task written by an earlier intent in this
+                // same message is visible to the next (prevents duplicates).
+                let existingTasks =
+                    deps.Vault.ListFiles "tasks/pending"
+                    |> List.choose (fun path ->
+                        try
+                            let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                            match mf.FrontMatter with
+                            | Some fm ->
+                                let t = Frontmatter.deserialize<Task> fm
+                                Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, mf.Content.Trim())
+                            | None -> None
+                        with _ -> None)
+                let shortlist =
+                    if List.isEmpty existingTasks then None
+                    else
+                        try
+                            let iv = deps.Embedder.Embed intent
+                            existingTasks
+                            |> List.map (fun (slug, title, summary) ->
+                                slug, title, summary, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + summary)))
+                            |> List.filter (fun (_, _, _, s) -> s >= deps.TaskSimilarityFloor)
+                            |> List.sortByDescending (fun (_, _, _, s) -> s)
+                            |> List.truncate deps.TaskTopK
+                            |> Some
+                        with _ -> None
+                match shortlist with
+                | Some (_ :: _ as candidates) ->
+                    let candidateText =
+                        candidates
+                        |> List.map (fun (slug, title, summary, _) -> sprintf "slug: %s\ntitle: %s\nsummary: %s" slug title summary)
+                        |> String.concat "\n\n"
+                    let payload = sprintf "New task intent: %s\n\nCandidate tasks:\n%s" intent candidateText
+                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.taskMatchSystem payload) with
+                    | Error _ -> createNewTask intent
+                    | Ok m ->
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
+                        match m.Match, matched with
+                        | true, Some (slug, _, _, _) ->
+                            let path = sprintf "tasks/pending/%s.md" slug
+                            try
+                                let existingRaw = deps.Vault.Read path
+                                let existing = MarkdownFile.FromString existingRaw
+                                match existing.FrontMatter with
+                                | Some fm ->
+                                    let t = Frontmatter.deserialize<Task> fm
+                                    let updatedRaw =
+                                        Agent.runConversation deps.Chat [] Prompts.taskUpdateSystem
+                                            (Prompts.taskUpdateUser existingRaw intent msg.Content)
+                                        |> stripFences
+                                    // Parse the model's updated task; fall back to old record + raw body on failure.
+                                    let newRec, newBody =
+                                        try
+                                            let parsed = MarkdownFile.FromString updatedRaw
+                                            match parsed.FrontMatter with
+                                            | Some nfm -> Frontmatter.deserialize<Task> nfm, parsed.Content
+                                            | None -> t, updatedRaw
+                                        with _ -> t, updatedRaw
+                                    let prank (p: string) =
+                                        match (if isNull p then "" else p).ToLowerInvariant() with
+                                        | "critical" -> 3 | "high" -> 2 | "medium" -> 1 | "low" -> 0 | _ -> -1
+                                    let mergedDue =
+                                        if System.String.IsNullOrWhiteSpace t.Due
+                                           && not (System.String.IsNullOrWhiteSpace newRec.Due)
+                                        then newRec.Due else t.Due
+                                    let mergedPriority =
+                                        if prank newRec.Priority > prank t.Priority then newRec.Priority else t.Priority
+                                    let merged =
+                                        { t with
+                                            Due = mergedDue
+                                            Priority = mergedPriority
+                                            Context = Array.append (if isNull t.Context then [||] else t.Context) classification.Contexts |> Array.distinct
+                                            People = Array.append (if isNull t.People then [||] else t.People) classification.PeopleMentioned |> Array.distinct
+                                            SourceMessage = messagePath }
+                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) newBody)
+                                    path
+                                | None -> createNewTask intent
+                            with _ -> createNewTask intent
+                        | _ -> createNewTask intent
+                | _ -> createNewTask intent
+
+            let taskPaths = classification.Entities.Tasks |> Array.toList |> List.map processTask
 
             // --- Step: create event files (date-pathed; undated events fall back to the message date) ---
             let parseWhen (s: string) (fallback: System.DateTime) =
@@ -524,6 +614,68 @@ module Pipeline =
                 if System.String.IsNullOrWhiteSpace mentionSlug then ()
                 elif (resolvePerson index mentionSlug).IsSome then ()   // already known by name or alias
                 else
+                    // Fuzzy second chance before creating a stub: shortlist existing people by
+                    // embedding similarity and confirm same-person; on match, add this surface
+                    // form as an alias instead of creating a duplicate stub.
+                    let addAliasTo (existingPath: string) =
+                        try
+                            let existing = MarkdownFile.FromString (deps.Vault.Read existingPath)
+                            match existing.FrontMatter with
+                            | Some fm ->
+                                let ep = Frontmatter.deserialize<Person> fm
+                                let existingAliases = if isNull ep.Aliases then [||] else ep.Aliases
+                                let known =
+                                    (Naming.slug ep.Title :: (existingAliases |> Array.toList |> List.map Naming.slug)) |> Set.ofList
+                                if not (Set.contains mentionSlug known) then
+                                    let merged = { ep with Aliases = Array.append existingAliases [| name.Trim() |] }
+                                    deps.Vault.Write(existingPath, MarkdownFile.ToString (Frontmatter.serialize merged) existing.Content)
+                            | None -> ()
+                        with _ -> ()
+                    let existingPeople =
+                        deps.Vault.ListFilesRecursive "people"
+                        |> List.choose (fun path ->
+                            try
+                                let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                                match mf.FrontMatter with
+                                | Some fm ->
+                                    let p = Frontmatter.deserialize<Person> fm
+                                    let aliases = if isNull p.Aliases then "" else String.concat " " (Array.toList p.Aliases)
+                                    Some (Naming.slug p.Title, p.Title, sprintf "%s %s" (if isNull p.Role then "" else p.Role) aliases)
+                                | None -> None
+                            with _ -> None)
+                    let fuzzyMatch =
+                        if List.isEmpty existingPeople then None
+                        else
+                            try
+                                let iv = deps.Embedder.Embed (sprintf "%s\n%s" name (String.concat ", " classification.Contexts))
+                                let shortlist =
+                                    existingPeople
+                                    |> List.map (fun (slug, title, role) ->
+                                        slug, title, role, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + role)))
+                                    |> List.filter (fun (_, _, _, s) -> s >= deps.PeopleSimilarityFloor)
+                                    |> List.sortByDescending (fun (_, _, _, s) -> s)
+                                    |> List.truncate deps.PeopleTopK
+                                match shortlist with
+                                | [] -> None
+                                | candidates ->
+                                    let candidateText =
+                                        candidates
+                                        |> List.map (fun (slug, title, role, _) -> sprintf "slug: %s\ntitle: %s\nrole: %s" slug title role)
+                                        |> String.concat "\n\n"
+                                    let payload = sprintf "New person mention: %s\nContext: %s\n\nCandidate people:\n%s" name (String.concat ", " classification.Contexts) candidateText
+                                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.personMatchSystem payload) with
+                                    | Ok m when m.Match ->
+                                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                                        candidates |> List.tryPick (fun (slug, _, _, _) -> if slug.ToLowerInvariant() = normalized then Some (slug) else None)
+                                    | _ -> None
+                            with _ -> None
+                    match fuzzyMatch with
+                    | Some slug ->
+                        // resolve the matched person's path from the index and add the alias
+                        match resolvePerson index slug with
+                        | Some existingPath -> addAliasTo existingPath
+                        | None -> ()
+                    | None ->
                     let user =
                         sprintf "Person mentioned: %s\nMessage context: %s\nMentioned in: %s"
                             name (String.concat ", " classification.Contexts) messagePath
