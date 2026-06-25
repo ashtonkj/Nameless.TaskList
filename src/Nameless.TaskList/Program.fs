@@ -82,6 +82,16 @@ module Program =
                 try Indexer.regenerate vault |> ReindexHandler.toHttp
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
+        app.MapGet("/relationships", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
+            fun (vault: IVault) ->
+                try RelationshipsHandler.allToHttp vault
+                with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
+
+        app.MapGet("/relationships/{slug}", System.Func<string, IVault, Microsoft.AspNetCore.Http.IResult>(
+            fun (slug: string) (vault: IVault) ->
+                try RelationshipsHandler.forPersonToHttp vault slug
+                with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
+
         let runDigest (vault: IVault) (chat: IChatClient) (p: Digest.DigestParams) : Microsoft.AspNetCore.Http.IResult =
             try
                 let deps : Digest.DigestDeps =
