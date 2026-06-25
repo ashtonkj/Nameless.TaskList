@@ -31,6 +31,18 @@ module Prompts =
           MatchReason: string
           NewTopicTitle: string }
 
+    [<CLIMutable>]
+    type RelationshipEdge =
+        { From: string
+          To: string
+          Relation: string
+          Descriptor: string
+          Confidence: string }
+
+    [<CLIMutable>]
+    type RelationshipExtraction =
+        { Relationships: RelationshipEdge array }
+
     let classifySystem = """You are a personal knowledge base assistant processing incoming messages for a busy professional.
 Your job is to classify each message and extract structured information from it.
 
@@ -169,6 +181,36 @@ Rules:
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
+    let relationshipExtractSystem = """You identify explicit relationships between people for a personal knowledge base.
+
+You are given the slugs of people already known to the knowledge base and the message that mentioned them.
+Identify only relationships that are explicitly stated or strongly implied between two of those people.
+
+Use the person slugs EXACTLY as given for "from" and "to".
+
+"relation" MUST be one of:
+  parent-child       (from = parent, to = child)
+  patient-doctor     (from = patient, to = doctor)
+  student-teacher    (from = student, to = teacher)
+  sibling            (symmetric)
+  partner            (symmetric)
+  colleague          (symmetric)
+  friend             (symmetric)
+  other              (use only when none of the above fit)
+
+"descriptor" is a short free-text detail (e.g. "paediatrician since 2022") or null.
+"confidence" is one of: high, medium, low.
+
+Respond ONLY with a JSON object in this exact format:
+
+{
+  "relationships": [
+    { "from": "slug-a", "to": "slug-b", "relation": "patient-doctor", "descriptor": "string or null", "confidence": "high" }
+  ]
+}
+
+If there are no clear relationships, respond with {"relationships": []}. No explanation."""
+
     let noteMatchSystem = """You are a knowledge base assistant. Decide whether a new durable fact
 belongs to an existing reference note, or whether it is a new note.
 
@@ -239,6 +281,7 @@ You may be given recent conversation history for context. Use it to interpret th
 
     let parseClassification (raw: string) : Result<Classification, string> = tryParse<Classification> raw
     let parseTopicMatch (raw: string) : Result<TopicMatch, string> = tryParse<TopicMatch> raw
+    let parseRelationships (raw: string) : Result<RelationshipExtraction, string> = tryParse<RelationshipExtraction> raw
 
     /// Render recent prior messages — as returned by GetRecent (newest-first) — into an
     /// oldest→newest transcript for use as conversation context. Media-only turns (empty

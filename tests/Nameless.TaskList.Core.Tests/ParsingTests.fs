@@ -41,3 +41,28 @@ let ``parseTopicMatch reads a match decision`` () =
         Assert.True(m.Match)
         Assert.Equal("birthday", m.TopicSlug)
     | Error e -> failwith e
+
+[<Fact>]
+let ``parseRelationships reads edges from snake_case json`` () =
+    let raw = """{ "relationships": [ { "from": "ethan", "to": "dr-naidoo", "relation": "patient-doctor", "descriptor": "paediatrician since 2022", "confidence": "high" } ] }"""
+    match Prompts.parseRelationships raw with
+    | Ok x ->
+        Assert.Equal(1, x.Relationships.Length)
+        Assert.Equal("ethan", x.Relationships.[0].From)
+        Assert.Equal("dr-naidoo", x.Relationships.[0].To)
+        Assert.Equal("patient-doctor", x.Relationships.[0].Relation)
+        Assert.Equal("high", x.Relationships.[0].Confidence)
+    | Error e -> failwith e
+
+[<Fact>]
+let ``parseRelationships tolerates code fences`` () =
+    let raw = "```json\n{ \"relationships\": [] }\n```"
+    match Prompts.parseRelationships raw with
+    | Ok x -> Assert.Equal(0, x.Relationships.Length)
+    | Error e -> failwith e
+
+[<Fact>]
+let ``parseRelationships returns Error on garbage`` () =
+    match Prompts.parseRelationships "not json at all" with
+    | Ok _ -> failwith "expected Error"
+    | Error _ -> ()
