@@ -246,6 +246,38 @@ Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
         sprintf "Current note body:\n%s\n\nNew fact (intent):\n%s\n\nSource message raw text:\n%s"
             existingBody intent raw
 
+    let taskMatchSystem = """You are a knowledge base assistant. Decide whether a new task intent is the
+SAME action as an existing pending task, or a genuinely new task.
+
+You are given the new task intent and a list of candidate tasks (slug, title, summary).
+Respond ONLY with a JSON object:
+
+{
+  "match": true/false,
+  "topic_slug": "slug of the matched task, or null if no match",
+  "confidence": 0.0,
+  "match_reason": "brief explanation",
+  "new_topic_title": "if match is false, a concise title for the new task, else null"
+}
+
+Rules:
+- Match ONLY when it is the same action restated (e.g. "Sign up for X" = "Register for X").
+- Do NOT match merely related actions toward the same goal (e.g. "buy a mattress" vs "research mattresses" are DIFFERENT tasks).
+- A confidence below 0.6 should result in match: false.
+- Do not add explanation outside the JSON object."""
+
+    let taskUpdateSystem = """You are updating a task in a personal knowledge base.
+You are given the current task body and a new mention of the same action.
+
+Rewrite the task body to fold in any new detail (e.g. a newly mentioned deadline or specifics).
+Keep it to 1-3 sentences. Preserve the original action.
+
+Respond ONLY with the updated task body (no frontmatter, no explanation)."""
+
+    let taskUpdateUser (existingBody: string) (intent: string) (raw: string) : string =
+        sprintf "Current task body:\n%s\n\nNew mention (intent):\n%s\n\nSource message raw text:\n%s"
+            existingBody intent raw
+
     let topicUpdateSystem = """You are updating a personal knowledge base topic document.
 You will be given the current topic document body and a new message that has been linked to it.
 

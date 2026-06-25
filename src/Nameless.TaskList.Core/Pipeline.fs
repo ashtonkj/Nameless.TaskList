@@ -351,7 +351,72 @@ module Pipeline =
                   BasePath = (fun t -> Naming.taskPath t.Title)
                   TitleOf = (fun t -> t.Title) }
 
-            let taskPaths = writeEntities deps taskSpec (List.ofArray classification.Entities.Tasks)
+            let createNewTask (intent: string) : string =
+                writeEntities deps taskSpec [ intent ] |> List.head
+
+            let processTask (intent: string) : string =
+                // Re-scan pending tasks each call so a task written by an earlier intent in this
+                // same message is visible to the next (prevents duplicates).
+                let existingTasks =
+                    deps.Vault.ListFiles "tasks/pending"
+                    |> List.choose (fun path ->
+                        try
+                            let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                            match mf.FrontMatter with
+                            | Some fm ->
+                                let t = Frontmatter.deserialize<Task> fm
+                                Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, mf.Content.Trim())
+                            | None -> None
+                        with _ -> None)
+                let shortlist =
+                    if List.isEmpty existingTasks then None
+                    else
+                        try
+                            let iv = deps.Embedder.Embed intent
+                            existingTasks
+                            |> List.map (fun (slug, title, summary) ->
+                                slug, title, summary, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + summary)))
+                            |> List.filter (fun (_, _, _, s) -> s >= deps.TaskSimilarityFloor)
+                            |> List.sortByDescending (fun (_, _, _, s) -> s)
+                            |> List.truncate deps.TaskTopK
+                            |> Some
+                        with _ -> None
+                match shortlist with
+                | Some (_ :: _ as candidates) ->
+                    let candidateText =
+                        candidates
+                        |> List.map (fun (slug, title, summary, _) -> sprintf "slug: %s\ntitle: %s\nsummary: %s" slug title summary)
+                        |> String.concat "\n\n"
+                    let payload = sprintf "New task intent: %s\n\nCandidate tasks:\n%s" intent candidateText
+                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.taskMatchSystem payload) with
+                    | Error _ -> createNewTask intent
+                    | Ok m ->
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
+                        match m.Match, matched with
+                        | true, Some (slug, _, _, _) ->
+                            let path = sprintf "tasks/pending/%s.md" slug
+                            try
+                                let existing = MarkdownFile.FromString (deps.Vault.Read path)
+                                match existing.FrontMatter with
+                                | Some fm ->
+                                    let t = Frontmatter.deserialize<Task> fm
+                                    let mergedBody =
+                                        Agent.runConversation deps.Chat [] Prompts.taskUpdateSystem
+                                            (Prompts.taskUpdateUser existing.Content intent msg.Content)
+                                        |> stripFences
+                                    let merged =
+                                        { t with
+                                            Context = Array.append (if isNull t.Context then [||] else t.Context) classification.Contexts |> Array.distinct
+                                            People = Array.append (if isNull t.People then [||] else t.People) classification.PeopleMentioned |> Array.distinct }
+                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) mergedBody)
+                                    path
+                                | None -> createNewTask intent
+                            with _ -> createNewTask intent
+                        | _ -> createNewTask intent
+                | _ -> createNewTask intent
+
+            let taskPaths = classification.Entities.Tasks |> Array.toList |> List.map processTask
 
             // --- Step: create event files (date-pathed; undated events fall back to the message date) ---
             let parseWhen (s: string) (fallback: System.DateTime) =

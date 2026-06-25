@@ -783,3 +783,80 @@ let ``processMessage writes no relationship edge when only one person resolves``
         // Assert no relationship file was written
         Assert.False(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("relationships/")))
     | other -> failwithf "expected Processed, got %A" other
+
+// ── Task match-and-merge tests ───────────────────────────────────────────────
+
+[<Fact>]
+let ``two matching task intents in one message produce one updated task file`` () =
+    let vault = FakeVault()
+    // Constant embedder => the first-written task is always shortlisted for the second intent.
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder
+    let d =
+        { Messages = FakeMessages(Some(sampleMessage ())); Vault = vault :> IVault
+          Chat = Unchecked.defaultof<IChatClient>; Model = "test-model"
+          Embedder = embedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+          TaskTopK = 5; TaskSimilarityFloor = 0.35; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
+          Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"sign up","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":["Sign up for the club","Register for the club"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Club"}"""
+    let taskCreate1 = Responses.final "---\ntype: Task\ntitle: Sign up for the club\nstatus: pending\npriority: medium\ndue: ''\ncontext:\n  - family\n---\nSign up for the club."
+    // Second intent: vault now has the first task -> shortlist -> taskMatch=true (same slug) -> taskUpdate.
+    let taskMatch2 = Responses.final """{"match":true,"topic_slug":"sign-up-for-the-club","confidence":0.9,"match_reason":"same action","new_topic_title":null}"""
+    let taskUpdate2 = Responses.final "Sign up / register for the club before the deadline."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskCreate1; taskMatch2; taskUpdate2; topicBody ])
+    let d = { d with Chat = chat }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let taskFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("tasks/")) |> List.ofSeq
+        Assert.Equal(1, taskFiles.Length)
+        Assert.True(vault.Files.ContainsKey("tasks/pending/sign-up-for-the-club.md"))
+        Assert.False(vault.Files.ContainsKey("tasks/pending/register-for-the-club.md"))
+        Assert.Contains("register", vault.Files.["tasks/pending/sign-up-for-the-club.md"])
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``two distinct task intents both create files (no false match)`` () =
+    let vault = FakeVault()
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"mattress","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":["Buy a mattress","Research mattresses"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Mattress"}"""
+    let taskCreate1 = Responses.final "---\ntype: Task\ntitle: Buy a mattress\nstatus: pending\npriority: medium\ndue: ''\ncontext:\n  - family\n---\nBuy a mattress."
+    let taskMatch2 = Responses.final """{"match":false,"topic_slug":null,"confidence":0.2,"match_reason":"different action","new_topic_title":"Research mattresses"}"""
+    let taskCreate2 = Responses.final "---\ntype: Task\ntitle: Research mattresses\nstatus: pending\npriority: medium\ndue: ''\ncontext:\n  - family\n---\nResearch mattresses."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskCreate1; taskMatch2; taskCreate2; topicBody ])
+    let d =
+        { Messages = FakeMessages(Some(sampleMessage ())); Vault = vault :> IVault
+          Chat = chat; Model = "test-model"; Embedder = embedder
+          TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+          TaskTopK = 5; TaskSimilarityFloor = 0.35; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
+          Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let taskFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("tasks/")) |> List.ofSeq
+        Assert.Equal(2, taskFiles.Length)
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``first task in an empty vault skips the embedder and matcher`` () =
+    let vault = FakeVault()
+    // Embedder throws if called; an empty tasks/pending must skip the shortlist entirely.
+    let embedder = FakeEmbedder(fun _ -> failwith "embedder must not be called") :> IEmbedder
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"call","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":["Call the school"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"School"}"""
+    let taskCreate = Responses.final "---\ntype: Task\ntitle: Call the school\nstatus: pending\npriority: medium\ndue: ''\ncontext:\n  - family\n---\nCall the school."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskCreate; topicBody ])
+    let d =
+        { Messages = FakeMessages(Some(sampleMessage ())); Vault = vault :> IVault
+          Chat = chat; Model = "test-model"; Embedder = embedder
+          TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
+          TaskTopK = 5; TaskSimilarityFloor = 0.35; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
+          Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) -> Assert.True(vault.Files.ContainsKey("tasks/pending/call-the-school.md"))
+    | other -> failwithf "expected Processed, got %A" other
