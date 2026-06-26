@@ -836,18 +836,6 @@ module Pipeline =
                 let existing = MarkdownFile.FromString (deps.Vault.Read topicPath)
                 let user = Prompts.topicUpdateUser historyText existing.Content msg.Content classification.Intent
                 let newBody = Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user
-                // OKF: make the topic body part of the graph by wikilinking the people it
-                // mentions. People are fully resolved by now (existing + stubs created above),
-                // so paths are correct; we link by the canonical person-file path, sans .md.
-                let peopleLinks =
-                    let idx = peopleIndex deps.Vault
-                    classification.PeopleMentioned
-                    |> Array.toList
-                    |> List.choose (fun name ->
-                        match resolvePerson idx (Naming.slug name) with
-                        | Some path -> Some (name.Trim(), (if path.EndsWith ".md" then path.Substring(0, path.Length - 3) else path))
-                        | None -> None)
-                let newBody = linkifyPeople peopleLinks newBody
                 match existing.FrontMatter with
                 | Some fm ->
                     let t = Frontmatter.deserialize<Topic> fm
@@ -857,9 +845,13 @@ module Pipeline =
                             MessageRefs = Array.append t.MessageRefs [| messagePath |]
                             SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths)
                             SpawnedEvents = Array.append t.SpawnedEvents (Array.ofList eventPaths) }
-                    // Append a deterministic "## Linked people" wikilink section for every
-                    // person on the topic (resolved to title + path), so the body carries the
-                    // graph edges even when the model paraphrases names out of the prose.
+                    // Resolve every person on the topic (title + path) once, then use that
+                    // list both to wikilink their names inline throughout the body and to
+                    // append a deterministic "## Linked people" section. Linking against the
+                    // topic's people (not just the current message's mentions) keeps the body
+                    // consistently linked across updates; the section guarantees the edge even
+                    // when the model paraphrases names out of the prose entirely. OKF: the
+                    // graph lives in body links.
                     let linkedPeople =
                         let idx = peopleIndex deps.Vault
                         (if isNull merged.People then [||] else merged.People)
@@ -877,7 +869,7 @@ module Pipeline =
                                 let pathNoMd = if path.EndsWith ".md" then path.Substring(0, path.Length - 3) else path
                                 Some (display, pathNoMd)
                             | None -> None)
-                    let finalBody = withLinkedPeople linkedPeople newBody
+                    let finalBody = withLinkedPeople linkedPeople (linkifyPeople linkedPeople newBody)
                     let updatedFrontmatter = Frontmatter.serialize merged
                     deps.Vault.Write(topicPath, MarkdownFile.ToString updatedFrontmatter finalBody)
                 | None ->
