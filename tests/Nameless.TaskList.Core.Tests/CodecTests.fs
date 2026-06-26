@@ -14,6 +14,21 @@ let ``serialize emits snake_case keys`` () =
     Assert.Contains("title: Book vaccine", yaml)
 
 [<Fact>]
+let ``serialize does not emit YAML anchors for shared empty arrays`` () =
+    // Two array fields both holding F#'s Array.empty singleton share a reference;
+    // without DisableAliases, YamlDotNet emits `tags: &o0 []` / `aliases: *o0`,
+    // which pollutes the frontmatter and breaks downstream parsers.
+    let shared = Array.empty<string>
+    let person : Person =
+        { Type = "Person"; Title = "Kevin Murray"; Role = ""; Context = [| "finance" |]
+          Channel = ""; Phone = ""; Email = ""; Tags = shared; Aliases = shared }
+    let yaml = Frontmatter.serialize person
+    Assert.DoesNotContain("&o", yaml)
+    Assert.DoesNotContain("*o", yaml)
+    Assert.Contains("tags: []", yaml)
+    Assert.Contains("aliases: []", yaml)
+
+[<Fact>]
 let ``ToString wraps frontmatter and body with fences`` () =
     let file = MarkdownFile.ToString "title: Hello\n" "Body text."
     Assert.StartsWith("---\n", file)

@@ -456,6 +456,25 @@ let ``embedding shortlists a similar topic and the LLM confirms the match`` () =
     | other -> failwithf "expected Processed match, got %A" other
 
 [<Fact>]
+let ``matching an out-of-order older message does not regress topic last_updated`` () =
+    let vault = FakeVault()
+    // Topic already updated at a time LATER than the sample message (2026-06-15).
+    vault.Seed("topics/active/birthday-party.md",
+               "---\ntype: Topic\ntitle: Birthday party\nstatus: active\ncontext:\n  - family\n" +
+               "first_seen: 2026-06-10T09:00:00+02:00\nlast_updated: 2026-06-20T10:00:00+02:00\n---\n" +
+               "## Current understanding\nplanning the party\n\n## Open questions\n\n## Resolved\n")
+    let embedder = FakeEmbedder(fun t -> if t.Contains("birthday") || t.Contains("Birthday") || t.Contains("party") then [| 1.0; 0.0 |] else [| 0.0; 1.0 |]) :> IEmbedder
+    let confirm = Responses.final """{"match":true,"topic_slug":"birthday-party","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    let chat = FakeChatClient([ signalClassify; confirm; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, _) ->
+        let content = vault.Files.["topics/active/birthday-party.md"]
+        Assert.Contains("last_updated: 2026-06-20T10:00:00+02:00", content)  // kept the later time
+        Assert.DoesNotContain("last_updated: 2026-06-15", content)           // not regressed to the older message
+    | other -> failwithf "expected Processed match, got %A" other
+
+[<Fact>]
 let ``no topic above the floor creates a new topic without an LLM topic-match call`` () =
     let vault = FakeVault()
     seedTopic vault "unrelated" "Unrelated" "something else entirely"

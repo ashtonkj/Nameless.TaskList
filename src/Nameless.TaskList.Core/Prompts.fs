@@ -147,6 +147,7 @@ Rules:
 - context: array — choose from [family, medical, school, finance, professional, personal-kb]
 - task_assigned: null
 - escalate_after_days: integer, default 7
+- Body: 1–3 sentences stating what is owed, to or for whom, and any condition or deadline. Never leave the body empty.
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 

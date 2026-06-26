@@ -31,6 +31,15 @@ module Pipeline =
 
     let private isoTimestamp (ts: System.DateTime) = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
 
+    /// The later of an existing ISO-8601 timestamp and a new message time. Topic
+    /// last_updated must never regress when an out-of-order (older) message is matched
+    /// into a topic, which would otherwise push last_updated below first_seen.
+    let private laterIso (existing: string) (ts: System.DateTime) : string =
+        let nu = isoTimestamp ts
+        match System.DateTimeOffset.TryParse existing, System.DateTimeOffset.TryParse nu with
+        | (true, prev), (true, cur) -> if prev > cur then existing else nu
+        | _ -> nu
+
     /// Strip surrounding code fences / leading prose from a model reply.
     let private stripFences (text: string) =
         let trimmed = (if isNull text then "" else text).Trim()
@@ -765,7 +774,7 @@ module Pipeline =
                     let t = Frontmatter.deserialize<Topic> fm
                     let merged =
                         { t with
-                            LastUpdated = isoTimestamp msg.Timestamp
+                            LastUpdated = laterIso t.LastUpdated msg.Timestamp
                             MessageRefs = Array.append t.MessageRefs [| messagePath |]
                             SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths)
                             SpawnedEvents = Array.append t.SpawnedEvents (Array.ofList eventPaths) }

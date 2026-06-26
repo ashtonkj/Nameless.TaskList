@@ -189,6 +189,10 @@ module Frontmatter =
     let private serializer =
         SerializerBuilder()
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            // F# shares the Array.empty singleton across fields, so two empty-array
+            // properties reference the same object; without this YamlDotNet emits
+            // `tags: &o0 []` / `aliases: *o0` anchors. We never want anchors in KB frontmatter.
+            .DisableAliases()
             .Build()
 
     let private deserializer =
