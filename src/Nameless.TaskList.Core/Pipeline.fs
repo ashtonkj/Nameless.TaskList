@@ -52,7 +52,11 @@ module Pipeline =
 
     let private knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
 
-    // Build a (slug -> person file path) index over every person's title + aliases.
+    // Build a (slug -> person file path) index over every person's filename, title + aliases.
+    // The filename slug is included as a key because curated person files are often named by a
+    // short canonical slug (e.g. aleks-ashton.md) that differs from the full-name title
+    // ("Aleksandra Anna Ashton"); without it a model proposing the canonical short name fails
+    // to resolve and a duplicate stub is written in another context folder.
     let private peopleIndex (vault: IVault) : (string * string list) list =
         vault.ListFilesRecursive "people"
         |> List.choose (fun path ->
@@ -62,7 +66,11 @@ module Pipeline =
                 | Some fm ->
                     let p = Frontmatter.deserialize<Person> fm
                     let aliasSlugs = if isNull p.Aliases then [] else p.Aliases |> Array.toList |> List.map Naming.slug
-                    let keys = (Naming.slug p.Title :: aliasSlugs) |> List.filter (fun s -> s <> "")
+                    let fileSlug = Naming.slug (System.IO.Path.GetFileNameWithoutExtension path)
+                    let keys =
+                        (fileSlug :: Naming.slug p.Title :: aliasSlugs)
+                        |> List.filter (fun s -> s <> "")
+                        |> List.distinct
                     Some (path, keys)
                 | None -> None
             with _ -> None)
@@ -292,13 +300,22 @@ module Pipeline =
                 ProcessedNoise
             else
 
+            // People references use the canonical slug form (matching person filenames), not a
+            // surface display name, so wikilinks and the relationship graph — which key off slugs
+            // — resolve to the right person file. Applied both to pipeline-set people (from the
+            // classification) and to people the model emits onto its task/event records.
+            let slugifyPeople (a: string array) =
+                if isNull a then [||]
+                else a |> Array.map Naming.slug |> Array.filter (fun s -> s <> "") |> Array.distinct
+            let peopleSlugs = slugifyPeople classification.PeopleMentioned
+
             // --- Step: topic match (embedding shortlist + LLM confirm; fallback to tool-enabled) ---
             let createNewTopic (title: string) =
                 let slug = Naming.slug title
                 let topicRecord : Topic =
                     { Type = "Topic"; Title = title; Status = "active"
                       Context = classification.Contexts; Channel = channelSlug
-                      People = classification.PeopleMentioned
+                      People = peopleSlugs
                       FirstSeen = isoTimestamp msg.Timestamp; LastUpdated = isoTimestamp msg.Timestamp
                       SpawnedTasks = [||]; SpawnedEvents = [||]; MessageRefs = [||] }
                 let body = "## Current understanding\n\n## Open questions\n\n## Resolved\n"
@@ -387,7 +404,7 @@ module Pipeline =
                                 let t = Frontmatter.deserialize<Task> fm
                                 if not (System.String.IsNullOrWhiteSpace t.Title) then
                                     // The pipeline owns identity + linkage; the model often omits them.
-                                    { Record = { t with Type = "Task"; Topic = topicPath; SourceMessage = messagePath }
+                                    { Record = { t with Type = "Task"; Topic = topicPath; SourceMessage = messagePath; People = slugifyPeople t.People }
                                       Body = parsed.Content }
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
@@ -395,7 +412,7 @@ module Pipeline =
                             let fb : Task =
                                 { Type = "Task"; Title = intent; Status = "pending"
                                   Priority = urgencyToPriority classification.Urgency; Due = ""
-                                  Context = classification.Contexts; People = classification.PeopleMentioned
+                                  Context = classification.Contexts; People = peopleSlugs
                                   Topic = topicPath; SourceMessage = messagePath }
                             { Record = fb; Body = intent })
                   BasePath = (fun t -> Naming.taskPath t.Title)
@@ -456,7 +473,7 @@ module Pipeline =
                                     Due = mergedDue
                                     Priority = mergedPriority
                                     Context = Array.append (if isNull t.Context then [||] else t.Context) classification.Contexts |> Array.distinct
-                                    People = Array.append (if isNull t.People then [||] else t.People) classification.PeopleMentioned |> Array.distinct
+                                    People = Array.append (if isNull t.People then [||] else t.People) peopleSlugs |> Array.distinct
                                     SourceMessage = messagePath }
                             deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) newBody)
                             path
@@ -491,13 +508,13 @@ module Pipeline =
                             | Some fm ->
                                 let e = Frontmatter.deserialize<Event> fm
                                 if not (System.String.IsNullOrWhiteSpace e.Title) then
-                                    ensureDated { e with Type = "Event"; Topic = topicPath; TasksLinked = Array.ofList taskPaths } parsed.Content
+                                    ensureDated { e with Type = "Event"; Topic = topicPath; TasksLinked = Array.ofList taskPaths; People = slugifyPeople e.People } parsed.Content
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
                             let fb : Event =
                                 { Type = "Event"; Title = intent; When = isoTimestamp msg.Timestamp; AllDay = true
-                                  Context = classification.Contexts; Location = ""; People = classification.PeopleMentioned
+                                  Context = classification.Contexts; Location = ""; People = peopleSlugs
                                   Topic = topicPath; TasksLinked = Array.ofList taskPaths; ReminderDaysBefore = 3 }
                             { Record = fb; Body = intent + flag })
                   BasePath = (fun e -> Naming.eventPath (parseWhen e.When msg.Timestamp) e.Title)
@@ -544,12 +561,15 @@ module Pipeline =
                     match parsed.FrontMatter with
                     | Some fm ->
                         let n = Frontmatter.deserialize<Note> fm
-                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Source = messagePath }, parsed.Content
+                        // People linkage is pipeline-owned (slugged from the classification), like
+                        // Source — the model is unreliable here and sometimes emits tags or display
+                        // names into people_linked.
+                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Source = messagePath; PeopleLinked = peopleSlugs }, parsed.Content
                         else raise (System.Exception("empty title"))
                     | None -> raise (System.Exception("no frontmatter"))
                 with _ ->
                     { Type = "Note"; Title = intent; Context = classification.Contexts
-                      PeopleLinked = classification.PeopleMentioned; Tags = [||]
+                      PeopleLinked = peopleSlugs; Tags = [||]
                       Source = messagePath; LastVerified = "" }, intent
 
             let createNewNote (intent: string) : string =
@@ -596,7 +616,7 @@ module Pipeline =
                                 { n with
                                     LastVerified = isoTimestamp msg.Timestamp
                                     Context = Array.append (if isNull n.Context then [||] else n.Context) classification.Contexts |> Array.distinct
-                                    PeopleLinked = Array.append (if isNull n.PeopleLinked then [||] else n.PeopleLinked) classification.PeopleMentioned |> Array.distinct }
+                                    PeopleLinked = Array.append (if isNull n.PeopleLinked then [||] else n.PeopleLinked) peopleSlugs |> Array.distinct }
                             deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) mergedBody)
                             path
                         | None -> createNewNote intent

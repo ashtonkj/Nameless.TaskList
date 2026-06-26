@@ -171,6 +171,20 @@ module Adapters =
         let ord = reader.GetOrdinal(col)
         if reader.IsDBNull(ord) then None else Some(reader.GetInt32(ord))
 
+    // The KB records timestamps as local wall-clock in SAST (+02:00) per DESIGN §4/§8.
+    // Postgres timestamptz comes back as an absolute instant, so read it as an offset value
+    // and shift it into SAST before exposing it as the message DateTime — otherwise file
+    // dates and frontmatter land in UTC and near-midnight messages roll to the wrong day.
+    let internal sastOffset = System.TimeSpan.FromHours 2.0
+
+    let private readKbTimestamp (reader: NpgsqlDataReader) (col: string) : System.DateTime =
+        (reader.GetFieldValue<System.DateTimeOffset>(reader.GetOrdinal col)).ToOffset(sastOffset).DateTime
+
+    // The reverse of readKbTimestamp: turn a SAST wall-clock DateTime back into the UTC instant
+    // a timestamptz query parameter needs (a cursor comparison must use the absolute instant).
+    let private toInstantParam (ts: System.DateTime) : System.DateTime =
+        System.DateTimeOffset(System.DateTime.SpecifyKind(ts, System.DateTimeKind.Unspecified), sastOffset).UtcDateTime
+
     let private mapChat (reader: NpgsqlDataReader) : ChatMessage =
         { Id = reader.GetString(reader.GetOrdinal("id"))
           ChatJid = reader.GetString(reader.GetOrdinal("chat_jid"))
@@ -188,7 +202,7 @@ module Adapters =
           FileName = getStringOrNull reader "filename"
           AlbumId = getStringOrNull reader "album_id"
           AlbumIndex = getIntOrNone reader "album_index"
-          Timestamp = reader.GetDateTime(reader.GetOrdinal("timestamp")) }
+          Timestamp = readKbTimestamp reader "timestamp" }
 
     type PostgresMessageSource(connectionString: string) =
         let openConnection () =
@@ -209,7 +223,7 @@ module Adapters =
                 use cmd = new NpgsqlCommand(Queries.GetPreviousMessagesByChatIdAndJid, conn)
                 cmd.Parameters.AddWithValue("Id", excludingId) |> ignore
                 cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
-                cmd.Parameters.AddWithValue("Timestamp", before) |> ignore
+                cmd.Parameters.AddWithValue("Timestamp", toInstantParam before) |> ignore
                 // F# resolves ExecuteReader() to the inherited DbDataReader overload, so an explicit downcast to NpgsqlDataReader is required
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
                 [ while reader.Read() do yield mapChat reader ]
