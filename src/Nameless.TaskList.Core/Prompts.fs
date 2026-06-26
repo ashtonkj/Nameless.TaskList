@@ -110,6 +110,7 @@ Generate the YAML frontmatter and a brief body for a new task file.
 
 Rules:
 - title: short, actionable, starts with a verb (Book, Call, Pay, Send, Review, etc.)
+- description: one concise sentence summarising the task for at-a-glance scanning (a label, not the full body).
 - status: always "pending" for new tasks
 - priority: infer from context and urgency — default to "medium" if unsure
 - due: include only if a specific date or timeframe was mentioned; use ISO 8601 date; null if none
@@ -124,6 +125,7 @@ Generate the YAML frontmatter and a brief body for a new event file.
 
 Rules:
 - title: short noun phrase naming the occurrence
+- description: one concise sentence summarising the event for at-a-glance scanning.
 - when: ISO 8601 datetime WITH the +02:00 timezone offset (the KB's local timezone, SAST) —
   e.g. "2026-06-22T10:00:00+02:00". Never use "Z"/UTC or a naive datetime without an offset.
   The reference date of the source message is provided; resolve relative dates ("next Friday",
@@ -141,9 +143,10 @@ A commitment is an obligation that exists but does not yet have an assigned task
 
 Rules:
 - title: short noun phrase naming the obligation
+- description: one concise sentence summarising the obligation for at-a-glance scanning.
 - status: always "unresolved" for a new commitment
 - priority: infer from context and urgency — default "medium"
-- due: ISO 8601 date if a deadline is known, else ""
+- due: a calendar DATE only in ISO 8601 "YYYY-MM-DD" form (no time-of-day, no timezone, never "Z"/UTC) if a deadline is known, else "". Resolve relative dates ("tomorrow", "Friday") against the source message's reference date.
 - context: array — choose from [family, medical, school, finance, professional, personal-kb]
 - task_assigned: null
 - escalate_after_days: integer, default 7
@@ -157,6 +160,7 @@ A Note is a DURABLE, evolving reference document for facts that stay useful acro
 
 Rules:
 - title: a SHORT noun-phrase LABEL naming the subject — at most ~6 words (e.g. "City Power contacts", "Medical aid details"). It is a label, NOT the fact itself: never put URLs, phone numbers, handles, or a list of details in the title — those belong only in the body.
+- description: one concise sentence summarising what this note records, for at-a-glance scanning.
 - context: array — choose from [family, medical, school, finance, professional, personal-kb].
 - tags: array of short lowercase tags (use [] if none).
 - Body: organise the fact under a short markdown section heading; include specifics (numbers, names, dates).
@@ -316,8 +320,18 @@ Rules:
 - Add newly resolved items to "## Resolved"
 - Do not reference the message itself — just update the facts
 
-Respond ONLY with the updated markdown body (no frontmatter, no explanation).
-You may be given recent conversation history for context. Use it to interpret the new message; do not summarise the history itself into the topic body."""
+CONVERSATION HISTORY — STRICT SCOPE:
+You may be given recent conversation history, labelled as such. It is BACKGROUND only —
+use it solely to interpret what the NEW message means (resolve pronouns, "it", "that date").
+NEVER fold facts, figures, or procedures that appear ONLY in the history into the topic body.
+The body must contain only what the topic's own messages (the new message and what is already
+in the document) established. If a detail came from a history line and not from the new message
+or the existing body, leave it out.
+Example: if the new message is "There's a SARS code needed; Kevin is coming tomorrow" and the
+history happens to explain Standard Bank's incoming-forex form fields, do NOT add those form
+details to the body — they belong to a different message, not this update.
+
+Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
 
     /// Pull the first JSON object out of a possibly-chatty / fenced model reply.
     let private extractJson (raw: string) : string =

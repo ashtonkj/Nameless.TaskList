@@ -83,6 +83,7 @@ type Channel =
 type Task =
     { Type: string
       Title: string
+      Description: string
       Status: string
       Priority: string
       Due: string
@@ -95,6 +96,7 @@ type Task =
 type Topic =
     { Type: string
       Title: string
+      Description: string
       Status: string
       Context: string array
       Channel: string
@@ -122,6 +124,7 @@ type Message =
 type Event =
     { Type: string
       Title: string
+      Description: string
       When: string
       AllDay: bool
       Context: string array
@@ -135,6 +138,7 @@ type Event =
 type Commitment =
     { Type: string
       Title: string
+      Description: string
       Status: string
       Priority: string
       Due: string
@@ -148,6 +152,7 @@ type Commitment =
 type Note =
     { Type: string
       Title: string
+      Description: string
       Context: string array
       PeopleLinked: string array
       Tags: string array

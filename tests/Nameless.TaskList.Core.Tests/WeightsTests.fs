@@ -44,7 +44,7 @@ open System
 open Nameless.TaskList.Core.KnowledgeBase
 
 let private task (context: string array) (due: string) (status: string) : Task =
-    { Type = "Task"; Title = "T"; Status = status; Priority = "medium"
+    { Type = "Task"; Title = "T"; Description = "d"; Status = status; Priority = "medium"
       Due = due; Context = context; People = [||]; Topic = ""; SourceMessage = "" }
 
 let private today = DateTime(2026, 6, 23)

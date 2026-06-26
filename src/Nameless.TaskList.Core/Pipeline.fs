@@ -40,6 +40,50 @@ module Pipeline =
         | (true, prev), (true, cur) -> if prev > cur then existing else nu
         | _ -> nu
 
+    /// Wrap whole-word mentions of known people in a body as Obsidian wikilinks
+    /// ([[path|Name]]) so the prose itself participates in the KB graph — OKF's core
+    /// idea that the graph lives in links between files, not only in frontmatter.
+    /// Existing wikilinks are preserved (never double-wrapped); longer names are linked
+    /// first so "Kevin Murray" wins over a bare "Kevin". Pure and best-effort.
+    let linkifyPeople (mentions: (string * string) list) (body: string) : string =
+        // Link one name, but only outside existing [[...]] spans: split keeping the link
+        // chunks (Regex.Split with a capturing group), linkify only the non-link segments,
+        // then rejoin. This never double-wraps a link added on a prior fold step.
+        let linkOne (text: string) (name: string, target: string) =
+            let pattern = sprintf @"\b%s\b" (System.Text.RegularExpressions.Regex.Escape name)
+            System.Text.RegularExpressions.Regex.Split(text, @"(\[\[[^\]]*\]\])")
+            |> Array.map (fun seg ->
+                if seg.StartsWith "[[" then seg
+                else System.Text.RegularExpressions.Regex.Replace(seg, pattern, fun _ -> sprintf "[[%s|%s]]" target name))
+            |> String.concat ""
+        if System.String.IsNullOrWhiteSpace body then body
+        else
+            mentions
+            |> List.filter (fun (n, t) -> not (System.String.IsNullOrWhiteSpace n) && not (System.String.IsNullOrWhiteSpace t))
+            |> List.distinctBy fst
+            |> List.sortByDescending (fun (n, _) -> n.Length)
+            |> List.fold linkOne body
+
+    /// Replace any existing "## Linked people" section of a topic body with a freshly
+    /// generated wikilink list built from the topic's resolved people (displayName,
+    /// path-without-.md). Deterministic and idempotent: the old block is stripped first
+    /// so the section never duplicates when the model echoes it back from prior content,
+    /// and it always reflects the current people. OKF: a guaranteed in-body link graph,
+    /// independent of how the model happens to phrase the prose.
+    let withLinkedPeople (people: (string * string) list) (body: string) : string =
+        let stripped =
+            System.Text.RegularExpressions.Regex.Replace(
+                (if isNull body then "" else body),
+                @"\n*##\s+Linked people\b.*?(?=\n##\s|\z)", "",
+                System.Text.RegularExpressions.RegexOptions.Singleline).TrimEnd()
+        let items =
+            people
+            |> List.filter (fun (n, t) -> not (System.String.IsNullOrWhiteSpace n) && not (System.String.IsNullOrWhiteSpace t))
+            |> List.distinctBy snd
+            |> List.map (fun (n, t) -> sprintf "- [[%s|%s]]" t n)
+        if List.isEmpty items then stripped
+        else stripped + "\n\n## Linked people\n\n" + String.concat "\n" items + "\n"
+
     /// Strip surrounding code fences / leading prose from a model reply.
     let private stripFences (text: string) =
         let trimmed = (if isNull text then "" else text).Trim()
@@ -322,7 +366,7 @@ module Pipeline =
             let createNewTopic (title: string) =
                 let slug = Naming.slug title
                 let topicRecord : Topic =
-                    { Type = "Topic"; Title = title; Status = "active"
+                    { Type = "Topic"; Title = title; Description = classification.Intent; Status = "active"
                       Context = classification.Contexts; Channel = channelSlug
                       People = peopleSlugs
                       FirstSeen = isoTimestamp msg.Timestamp; LastUpdated = isoTimestamp msg.Timestamp
@@ -413,13 +457,13 @@ module Pipeline =
                                 let t = Frontmatter.deserialize<Task> fm
                                 if not (System.String.IsNullOrWhiteSpace t.Title) then
                                     // The pipeline owns identity + linkage; the model often omits them.
-                                    { Record = { t with Type = "Task"; Topic = topicPath; SourceMessage = messagePath; People = slugifyPeople t.People }
+                                    { Record = { t with Type = "Task"; Description = (if System.String.IsNullOrWhiteSpace t.Description then intent else t.Description); Topic = topicPath; SourceMessage = messagePath; People = slugifyPeople t.People }
                                       Body = parsed.Content }
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
                             let fb : Task =
-                                { Type = "Task"; Title = intent; Status = "pending"
+                                { Type = "Task"; Title = intent; Description = intent; Status = "pending"
                                   Priority = urgencyToPriority classification.Urgency; Due = ""
                                   Context = classification.Contexts; People = peopleSlugs
                                   Topic = topicPath; SourceMessage = messagePath }
@@ -517,12 +561,12 @@ module Pipeline =
                             | Some fm ->
                                 let e = Frontmatter.deserialize<Event> fm
                                 if not (System.String.IsNullOrWhiteSpace e.Title) then
-                                    ensureDated { e with Type = "Event"; Topic = topicPath; TasksLinked = Array.ofList taskPaths; People = slugifyPeople e.People } parsed.Content
+                                    ensureDated { e with Type = "Event"; Description = (if System.String.IsNullOrWhiteSpace e.Description then intent else e.Description); Topic = topicPath; TasksLinked = Array.ofList taskPaths; People = slugifyPeople e.People } parsed.Content
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
                             let fb : Event =
-                                { Type = "Event"; Title = intent; When = isoTimestamp msg.Timestamp; AllDay = true
+                                { Type = "Event"; Title = intent; Description = intent; When = isoTimestamp msg.Timestamp; AllDay = true
                                   Context = classification.Contexts; Location = ""; People = peopleSlugs
                                   Topic = topicPath; TasksLinked = Array.ofList taskPaths; ReminderDaysBefore = 3 }
                             { Record = fb; Body = intent + flag })
@@ -536,8 +580,8 @@ module Pipeline =
                 { Prompt = Prompts.commitmentCreateSystem
                   BuildUser =
                     (fun intent ->
-                        sprintf "Commitment intent: %s\nRaw message: %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
-                            intent msg.Content (String.concat ", " classification.Contexts) classification.Urgency messagePath)
+                        sprintf "Commitment intent: %s\nRaw message: %s\nReference date (resolve relative dates against this): %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
+                            intent msg.Content (isoTimestamp msg.Timestamp) (String.concat ", " classification.Contexts) classification.Urgency messagePath)
                   Interpret =
                     (fun stripped intent ->
                         try
@@ -546,13 +590,13 @@ module Pipeline =
                             | Some fm ->
                                 let c = Frontmatter.deserialize<Commitment> fm
                                 if not (System.String.IsNullOrWhiteSpace c.Title) then
-                                    { Record = { c with Type = "Commitment"; Topic = topicPath; SourceMessage = messagePath }
+                                    { Record = { c with Type = "Commitment"; Description = (if System.String.IsNullOrWhiteSpace c.Description then intent else c.Description); Topic = topicPath; SourceMessage = messagePath }
                                       Body = parsed.Content }
                                 else raise (System.Exception("empty title"))
                             | None -> raise (System.Exception("no frontmatter"))
                         with _ ->
                             let fb : Commitment =
-                                { Type = "Commitment"; Title = intent; Status = "unresolved"
+                                { Type = "Commitment"; Title = intent; Description = intent; Status = "unresolved"
                                   Priority = urgencyToPriority classification.Urgency; Due = ""
                                   Context = classification.Contexts; Topic = topicPath
                                   TaskAssigned = ""; EscalateAfterDays = 7; SourceMessage = messagePath }
@@ -561,7 +605,6 @@ module Pipeline =
                   TitleOf = (fun c -> c.Title) }
 
             let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments)
-            ignore commitmentPaths
 
             // --- Step: notes (durable reference only) — match an existing note and merge, else create ---
             let interpretNote (stripped: string) (intent: string) : Note * string =
@@ -573,11 +616,11 @@ module Pipeline =
                         // People linkage is pipeline-owned (slugged from the classification), like
                         // Source — the model is unreliable here and sometimes emits tags or display
                         // names into people_linked.
-                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Source = messagePath; PeopleLinked = peopleSlugs }, parsed.Content
+                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Description = (if System.String.IsNullOrWhiteSpace n.Description then intent else n.Description); Source = messagePath; PeopleLinked = peopleSlugs }, parsed.Content
                         else raise (System.Exception("empty title"))
                     | None -> raise (System.Exception("no frontmatter"))
                 with _ ->
-                    { Type = "Note"; Title = intent; Context = classification.Contexts
+                    { Type = "Note"; Title = intent; Description = intent; Context = classification.Contexts
                       PeopleLinked = peopleSlugs; Tags = [||]
                       Source = messagePath; LastVerified = "" }, intent
 
@@ -756,6 +799,30 @@ module Pipeline =
                     | _ -> ()
              with _ -> ())
 
+            // --- Step: wikilink resolved people into the entity bodies. Task/commitment/
+            // note/event prose reliably names the people involved, and by now every mention
+            // is resolved to a person file, so the links are correct. OKF: the graph lives
+            // in body links, not only frontmatter. Best-effort; never blocks the write.
+            (try
+                let idx = peopleIndex deps.Vault
+                let mentionLinks =
+                    classification.PeopleMentioned
+                    |> Array.toList
+                    |> List.choose (fun name ->
+                        match resolvePerson idx (Naming.slug name) with
+                        | Some path -> Some (name.Trim(), (if path.EndsWith ".md" then path.Substring(0, path.Length - 3) else path))
+                        | None -> None)
+                if not (List.isEmpty mentionLinks) then
+                    for path in (taskPaths @ eventPaths @ commitmentPaths @ notePaths) do
+                        if deps.Vault.Exists path then
+                            let mf = MarkdownFile.FromString (deps.Vault.Read path)
+                            let linked = linkifyPeople mentionLinks mf.Content
+                            if linked <> mf.Content then
+                                match mf.FrontMatter with
+                                | Some fm -> deps.Vault.Write(path, MarkdownFile.ToString fm linked)
+                                | None -> ()
+             with ex -> eprintfn "Entity wikilinking skipped: %s" ex.Message)
+
             // --- Step: write the message record referencing topic + tasks ---
             let messageRecord : Message =
                 { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
@@ -769,6 +836,18 @@ module Pipeline =
                 let existing = MarkdownFile.FromString (deps.Vault.Read topicPath)
                 let user = Prompts.topicUpdateUser historyText existing.Content msg.Content classification.Intent
                 let newBody = Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user
+                // OKF: make the topic body part of the graph by wikilinking the people it
+                // mentions. People are fully resolved by now (existing + stubs created above),
+                // so paths are correct; we link by the canonical person-file path, sans .md.
+                let peopleLinks =
+                    let idx = peopleIndex deps.Vault
+                    classification.PeopleMentioned
+                    |> Array.toList
+                    |> List.choose (fun name ->
+                        match resolvePerson idx (Naming.slug name) with
+                        | Some path -> Some (name.Trim(), (if path.EndsWith ".md" then path.Substring(0, path.Length - 3) else path))
+                        | None -> None)
+                let newBody = linkifyPeople peopleLinks newBody
                 match existing.FrontMatter with
                 | Some fm ->
                     let t = Frontmatter.deserialize<Topic> fm
@@ -778,8 +857,29 @@ module Pipeline =
                             MessageRefs = Array.append t.MessageRefs [| messagePath |]
                             SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths)
                             SpawnedEvents = Array.append t.SpawnedEvents (Array.ofList eventPaths) }
+                    // Append a deterministic "## Linked people" wikilink section for every
+                    // person on the topic (resolved to title + path), so the body carries the
+                    // graph edges even when the model paraphrases names out of the prose.
+                    let linkedPeople =
+                        let idx = peopleIndex deps.Vault
+                        (if isNull merged.People then [||] else merged.People)
+                        |> Array.toList
+                        |> List.choose (fun slug ->
+                            match resolvePerson idx slug with
+                            | Some path ->
+                                let title =
+                                    try
+                                        match (MarkdownFile.FromString (deps.Vault.Read path)).FrontMatter with
+                                        | Some pfm -> (Frontmatter.deserialize<Person> pfm).Title
+                                        | None -> slug
+                                    with _ -> slug
+                                let display = if System.String.IsNullOrWhiteSpace title then slug else title
+                                let pathNoMd = if path.EndsWith ".md" then path.Substring(0, path.Length - 3) else path
+                                Some (display, pathNoMd)
+                            | None -> None)
+                    let finalBody = withLinkedPeople linkedPeople newBody
                     let updatedFrontmatter = Frontmatter.serialize merged
-                    deps.Vault.Write(topicPath, MarkdownFile.ToString updatedFrontmatter newBody)
+                    deps.Vault.Write(topicPath, MarkdownFile.ToString updatedFrontmatter finalBody)
                 | None ->
                     eprintfn "Topic update skipped for %s: no frontmatter found; file left unchanged" topicPath
              with ex ->

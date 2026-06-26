@@ -456,6 +456,55 @@ let ``embedding shortlists a similar topic and the LLM confirms the match`` () =
     | other -> failwithf "expected Processed match, got %A" other
 
 [<Fact>]
+let ``linkifyPeople wraps a mentioned person as a wikilink`` () =
+    let out = Pipeline.linkifyPeople [ "Kevin Murray", "people/finance/kevin-murray" ]
+                "Call Kevin Murray tomorrow about the code."
+    Assert.Equal("Call [[people/finance/kevin-murray|Kevin Murray]] tomorrow about the code.", out)
+
+[<Fact>]
+let ``linkifyPeople links the longer name and not a bare first name inside it`` () =
+    // "Kevin Murray" must win; the bare "Kevin" mention must not corrupt the link already made.
+    let out = Pipeline.linkifyPeople
+                [ "Kevin", "people/family/kevin-ashton"; "Kevin Murray", "people/finance/kevin-murray" ]
+                "Kevin Murray is coming."
+    Assert.Equal("[[people/finance/kevin-murray|Kevin Murray]] is coming.", out)
+
+[<Fact>]
+let ``linkifyPeople does not double-wrap an existing wikilink`` () =
+    let already = "See [[people/finance/kevin-murray|Kevin Murray]] for this."
+    Assert.Equal(already, Pipeline.linkifyPeople [ "Kevin Murray", "people/finance/kevin-murray" ] already)
+
+[<Fact>]
+let ``linkifyPeople preserves a literal number in prose`` () =
+    // Guards the sentinel-free implementation: a bare number must survive untouched.
+    let out = Pipeline.linkifyPeople [ "Aleks", "people/family/aleks-ashton" ]
+                "Aleks should check email from the 8th, around 5 pm."
+    Assert.Equal("[[people/family/aleks-ashton|Aleks]] should check email from the 8th, around 5 pm.", out)
+
+[<Fact>]
+let ``withLinkedPeople appends a wikilink section for topic people`` () =
+    let body = "## Current understanding\nKevin is helping.\n\n## Resolved\n"
+    let out = Pipeline.withLinkedPeople [ "Kevin Murray", "people/finance/kevin-murray" ] body
+    Assert.Contains("## Linked people", out)
+    Assert.Contains("- [[people/finance/kevin-murray|Kevin Murray]]", out)
+
+[<Fact>]
+let ``withLinkedPeople is idempotent and never duplicates the section`` () =
+    let body = "## Current understanding\nx\n"
+    let once = Pipeline.withLinkedPeople [ "Kevin Murray", "people/finance/kevin-murray" ] body
+    // Re-running on already-sectioned content (as happens when the model echoes it back)
+    // must replace, not stack, the section.
+    let twice = Pipeline.withLinkedPeople [ "Kevin Murray", "people/finance/kevin-murray" ] once
+    Assert.Equal(once, twice)
+    let occurrences = (once.Length - once.Replace("## Linked people", "").Length) / "## Linked people".Length
+    Assert.Equal(1, occurrences)
+
+[<Fact>]
+let ``withLinkedPeople with no people leaves the body unchanged`` () =
+    let body = "## Current understanding\nx\n\n## Resolved\n"
+    Assert.Equal(body.TrimEnd(), Pipeline.withLinkedPeople [] body)
+
+[<Fact>]
 let ``matching an out-of-order older message does not regress topic last_updated`` () =
     let vault = FakeVault()
     // Topic already updated at a time LATER than the sample message (2026-06-15).
@@ -544,6 +593,7 @@ let ``accepted entity reply backfills type and pipeline-owned linkage`` () =
         Assert.Contains("type: Task", content)        // pipeline owns the type tag
         Assert.Contains(topic, content)               // topic path backfilled
         Assert.Contains("messages/", content)         // source_message backfilled
+        Assert.Contains("description: Do the thing", content)  // description coalesced from the task intent when the model omits it
     | other -> failwithf "expected Processed, got %A" other
 
 [<Fact>]
@@ -598,6 +648,22 @@ let private personDeps (messages: IMessageSource) (vault: FakeVault) (chat: ICha
 let private seedPerson (vault: FakeVault) (path: string) (title: string) (context: string) (aliases: string list) =
     let aliasYaml = if List.isEmpty aliases then "[]" else "[" + (aliases |> List.map (fun a -> sprintf "\"%s\"" a) |> String.concat ", ") + "]"
     vault.Seed(path, sprintf "---\ntype: Person\ntitle: %s\nrole: spouse\ncontext: [%s]\nchannel: \"\"\nphone: \"\"\nemail: \"\"\ntags: []\naliases: %s\n---\nstub\n" title context aliasYaml)
+
+[<Fact>]
+let ``a created task body wikilinks a resolved person it names`` () =
+    let vault = FakeVault()
+    seedPerson vault "people/family/sarah-smith.md" "Sarah Smith" "family" []
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"call sarah","action_required":true,"urgency":"medium","people_mentioned":["Sarah Smith"],"entities":{"tasks":["Call Sarah Smith"],"events":[],"commitments":[],"notes":[]}}"""
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Call Sarah"}"""
+    let taskFile = Responses.final "---\ntitle: Call Sarah Smith\nstatus: pending\npriority: medium\ncontext:\n  - family\n---\nCall Sarah Smith about the arrangements."
+    let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ classify; topicMatch; taskFile; topicBody ])
+    let d = personDeps (FakeMessages(Some(personMessage ()))) vault chat
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(_, tasks) ->
+        let body = vault.Files.[List.head tasks]
+        Assert.Contains("[[people/family/sarah-smith|Sarah Smith]]", body)
+    | other -> failwithf "expected Processed, got %A" other
 
 [<Fact>]
 let ``person mention matching a recorded alias does not create a duplicate`` () =

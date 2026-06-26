@@ -6,7 +6,7 @@ open Xunit
 [<Fact>]
 let ``serialize emits snake_case keys`` () =
     let task : Task =
-        { Type = "Task"; Title = "Book vaccine"; Status = "pending"; Priority = "high"
+        { Type = "Task"; Title = "Book vaccine"; Description = "d"; Status = "pending"; Priority = "high"
           Due = "2026-06-30"; Context = [| "medical" |]; People = [| "ethan" |]
           Topic = "topics/active/x.md"; SourceMessage = "messages/x/y.md" }
     let yaml = Frontmatter.serialize task
@@ -38,7 +38,7 @@ let ``ToString wraps frontmatter and body with fences`` () =
 [<Fact>]
 let ``Task round-trips through serialize and FromString`` () =
     let original : Task =
-        { Type = "Task"; Title = "Book vaccine"; Status = "pending"; Priority = "high"
+        { Type = "Task"; Title = "Book vaccine"; Description = "d"; Status = "pending"; Priority = "high"
           Due = "2026-06-30"; Context = [| "medical"; "family" |]; People = [| "ethan" |]
           Topic = "topics/active/x.md"; SourceMessage = "messages/x/y.md" }
     let file = MarkdownFile.ToString (Frontmatter.serialize original) "Some body."
@@ -53,7 +53,7 @@ let ``Task round-trips through serialize and FromString`` () =
 [<Fact>]
 let ``Event round-trips through serialize and FromString`` () =
     let original : Event =
-        { Type = "Event"; Title = "Sports day"; When = "2026-06-20T09:00:00+02:00"; AllDay = false
+        { Type = "Event"; Title = "Sports day"; Description = "d"; When = "2026-06-20T09:00:00+02:00"; AllDay = false
           Context = [| "school" |]; Location = "Field"; People = [| "ethan" |]
           Topic = "topics/active/x.md"; TasksLinked = [| "tasks/pending/y.md" |]; ReminderDaysBefore = 3 }
     let file = MarkdownFile.ToString (Frontmatter.serialize original) "Body."
@@ -65,13 +65,13 @@ let ``Event round-trips through serialize and FromString`` () =
 [<Fact>]
 let ``Commitment and Note and Person round-trip`` () =
     let c : Commitment =
-        { Type = "Commitment"; Title = "Q3 fees"; Status = "unresolved"; Priority = "high"; Due = "2026-07-01"
+        { Type = "Commitment"; Title = "Q3 fees"; Description = "d"; Status = "unresolved"; Priority = "high"; Due = "2026-07-01"
           Context = [| "finance" |]; Topic = ""; TaskAssigned = ""; EscalateAfterDays = 7; SourceMessage = "messages/x/y.md" }
     let cb = Frontmatter.deserialize<Commitment> (MarkdownFile.FromString (MarkdownFile.ToString (Frontmatter.serialize c) "b")).FrontMatter.Value
     Assert.Equal(7, cb.EscalateAfterDays)
 
     let n : Note =
-        { Type = "Note"; Title = "Allergy"; Context = [| "medical" |]; PeopleLinked = [| "ethan" |]
+        { Type = "Note"; Title = "Allergy"; Description = "d"; Context = [| "medical" |]; PeopleLinked = [| "ethan" |]
           Tags = [| "allergy" |]; Source = "messages/x/y.md"; LastVerified = "" }
     let nb = Frontmatter.deserialize<Note> (MarkdownFile.FromString (MarkdownFile.ToString (Frontmatter.serialize n) "b")).FrontMatter.Value
     Assert.Equal<string array>([| "allergy" |], nb.Tags)
