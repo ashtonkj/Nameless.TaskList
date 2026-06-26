@@ -166,6 +166,56 @@ module Pipeline =
             deps.Vault.Write(path, text)
             path)
 
+    /// Shared shortlist-and-confirm core for the match-and-merge sites (notes, tasks, people).
+    /// `candidates` are (slug, embedText, displayLine). Embeds `queryText`, scores each candidate's
+    /// `embedText` by cosine, keeps those >= `floor`, takes the top `topK`, then asks the model
+    /// (via `systemPrompt` over `buildPayload (displayLines)`) to confirm a match and returns the
+    /// matched slug. Best-effort: empty candidates / embedder failure / parse error / no confirmed
+    /// match all yield None (the caller then creates/stubs as before).
+    let private shortlistAndConfirm
+        (deps: PipelineDeps) (queryText: string)
+        (candidates: (string * string * string) list)
+        (floor: float) (topK: int) (systemPrompt: string)
+        (buildPayload: string list -> string) : string option =
+        if List.isEmpty candidates then None
+        else
+            try
+                let q = deps.Embedder.Embed queryText
+                let shortlisted =
+                    candidates
+                    |> List.map (fun (slug, embedText, line) -> slug, line, Similarity.cosine q (deps.Embedder.Embed embedText))
+                    |> List.filter (fun (_, _, s) -> s >= floor)
+                    |> List.sortByDescending (fun (_, _, s) -> s)
+                    |> List.truncate topK
+                    |> List.map (fun (slug, line, _) -> slug, line)
+                match shortlisted with
+                | [] -> None
+                | sl ->
+                    let payload = buildPayload (sl |> List.map snd)
+                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] systemPrompt payload) with
+                    | Ok m when m.Match ->
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        sl |> List.tryPick (fun (slug, _) -> if slug.ToLowerInvariant() = normalized then Some slug else None)
+                    | _ -> None
+            with _ -> None
+
+    /// Append `name` as an alias on the person file at `existingPath`, unless `mentionSlug` is
+    /// already known (the title or an existing alias). Best-effort; never throws.
+    let private addPersonAlias (vault: IVault) (existingPath: string) (name: string) (mentionSlug: string) =
+        try
+            let existing = MarkdownFile.FromString (vault.Read existingPath)
+            match existing.FrontMatter with
+            | Some fm ->
+                let ep = Frontmatter.deserialize<Person> fm
+                let existingAliases = if isNull ep.Aliases then [||] else ep.Aliases
+                let known =
+                    (Naming.slug ep.Title :: (existingAliases |> Array.toList |> List.map Naming.slug)) |> Set.ofList
+                if not (Set.contains mentionSlug known) then
+                    let merged = { ep with Aliases = Array.append existingAliases [| name.Trim() |] }
+                    vault.Write(existingPath, MarkdownFile.ToString (Frontmatter.serialize merged) existing.Content)
+            | None -> ()
+        with _ -> ()
+
     let processMessage (deps: PipelineDeps) (id: string) (chatJid: string) : PipelineResult =
         match deps.Messages.GetMessage(id, chatJid) with
         | None -> NotFound
@@ -365,77 +415,54 @@ module Pipeline =
                             match mf.FrontMatter with
                             | Some fm ->
                                 let t = Frontmatter.deserialize<Task> fm
-                                Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, mf.Content.Trim())
+                                let slug = System.IO.Path.GetFileNameWithoutExtension(path)
+                                let summary = mf.Content.Trim()
+                                Some (slug, t.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug t.Title summary)
                             | None -> None
                         with _ -> None)
-                let shortlist =
-                    if List.isEmpty existingTasks then None
-                    else
-                        try
-                            let iv = deps.Embedder.Embed intent
-                            existingTasks
-                            |> List.map (fun (slug, title, summary) ->
-                                slug, title, summary, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + summary)))
-                            |> List.filter (fun (_, _, _, s) -> s >= deps.TaskSimilarityFloor)
-                            |> List.sortByDescending (fun (_, _, _, s) -> s)
-                            |> List.truncate deps.TaskTopK
-                            |> Some
-                        with _ -> None
-                match shortlist with
-                | Some (_ :: _ as candidates) ->
-                    let candidateText =
-                        candidates
-                        |> List.map (fun (slug, title, summary, _) -> sprintf "slug: %s\ntitle: %s\nsummary: %s" slug title summary)
-                        |> String.concat "\n\n"
-                    let payload = sprintf "New task intent: %s\n\nCandidate tasks:\n%s" intent candidateText
-                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.taskMatchSystem payload) with
-                    | Error _ -> createNewTask intent
-                    | Ok m ->
-                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
-                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
-                        match m.Match, matched with
-                        | true, Some (slug, _, _, _) ->
-                            let path = sprintf "tasks/pending/%s.md" slug
-                            try
-                                let existingRaw = deps.Vault.Read path
-                                let existing = MarkdownFile.FromString existingRaw
-                                match existing.FrontMatter with
-                                | Some fm ->
-                                    let t = Frontmatter.deserialize<Task> fm
-                                    let updatedRaw =
-                                        Agent.runConversation deps.Chat [] Prompts.taskUpdateSystem
-                                            (Prompts.taskUpdateUser existingRaw intent msg.Content)
-                                        |> stripFences
-                                    // Parse the model's updated task; fall back to old record + raw body on failure.
-                                    let newRec, newBody =
-                                        try
-                                            let parsed = MarkdownFile.FromString updatedRaw
-                                            match parsed.FrontMatter with
-                                            | Some nfm -> Frontmatter.deserialize<Task> nfm, parsed.Content
-                                            | None -> t, updatedRaw
-                                        with _ -> t, updatedRaw
-                                    let prank (p: string) =
-                                        match (if isNull p then "" else p).ToLowerInvariant() with
-                                        | "critical" -> 3 | "high" -> 2 | "medium" -> 1 | "low" -> 0 | _ -> -1
-                                    let mergedDue =
-                                        if System.String.IsNullOrWhiteSpace t.Due
-                                           && not (System.String.IsNullOrWhiteSpace newRec.Due)
-                                        then newRec.Due else t.Due
-                                    let mergedPriority =
-                                        if prank newRec.Priority > prank t.Priority then newRec.Priority else t.Priority
-                                    let merged =
-                                        { t with
-                                            Due = mergedDue
-                                            Priority = mergedPriority
-                                            Context = Array.append (if isNull t.Context then [||] else t.Context) classification.Contexts |> Array.distinct
-                                            People = Array.append (if isNull t.People then [||] else t.People) classification.PeopleMentioned |> Array.distinct
-                                            SourceMessage = messagePath }
-                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) newBody)
-                                    path
-                                | None -> createNewTask intent
-                            with _ -> createNewTask intent
-                        | _ -> createNewTask intent
-                | _ -> createNewTask intent
+                let buildPayload lines = sprintf "New task intent: %s\n\nCandidate tasks:\n%s" intent (String.concat "\n\n" lines)
+                match shortlistAndConfirm deps intent existingTasks deps.TaskSimilarityFloor deps.TaskTopK Prompts.taskMatchSystem buildPayload with
+                | Some slug ->
+                    let path = sprintf "tasks/pending/%s.md" slug
+                    try
+                        let existingRaw = deps.Vault.Read path
+                        let existing = MarkdownFile.FromString existingRaw
+                        match existing.FrontMatter with
+                        | Some fm ->
+                            let t = Frontmatter.deserialize<Task> fm
+                            let updatedRaw =
+                                Agent.runConversation deps.Chat [] Prompts.taskUpdateSystem
+                                    (Prompts.taskUpdateUser existingRaw intent msg.Content)
+                                |> stripFences
+                            // Parse the model's updated task; fall back to old record + raw body on failure.
+                            let newRec, newBody =
+                                try
+                                    let parsed = MarkdownFile.FromString updatedRaw
+                                    match parsed.FrontMatter with
+                                    | Some nfm -> Frontmatter.deserialize<Task> nfm, parsed.Content
+                                    | None -> t, updatedRaw
+                                with _ -> t, updatedRaw
+                            let prank (p: string) =
+                                match (if isNull p then "" else p).ToLowerInvariant() with
+                                | "critical" -> 3 | "high" -> 2 | "medium" -> 1 | "low" -> 0 | _ -> -1
+                            let mergedDue =
+                                if System.String.IsNullOrWhiteSpace t.Due
+                                   && not (System.String.IsNullOrWhiteSpace newRec.Due)
+                                then newRec.Due else t.Due
+                            let mergedPriority =
+                                if prank newRec.Priority > prank t.Priority then newRec.Priority else t.Priority
+                            let merged =
+                                { t with
+                                    Due = mergedDue
+                                    Priority = mergedPriority
+                                    Context = Array.append (if isNull t.Context then [||] else t.Context) classification.Contexts |> Array.distinct
+                                    People = Array.append (if isNull t.People then [||] else t.People) classification.PeopleMentioned |> Array.distinct
+                                    SourceMessage = messagePath }
+                            deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) newBody)
+                            path
+                        | None -> createNewTask intent
+                    with _ -> createNewTask intent
+                | None -> createNewTask intent
 
             let taskPaths = classification.Entities.Tasks |> Array.toList |> List.map processTask
 
@@ -547,57 +574,34 @@ module Pipeline =
                             match mf.FrontMatter with
                             | Some fm ->
                                 let n = Frontmatter.deserialize<Note> fm
-                                Some (System.IO.Path.GetFileNameWithoutExtension(path), n.Title, mf.Content.Trim())
+                                let slug = System.IO.Path.GetFileNameWithoutExtension(path)
+                                let summary = mf.Content.Trim()
+                                Some (slug, n.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug n.Title summary)
                             | None -> None
                         with _ -> None)
-                let shortlist =
-                    if List.isEmpty existingNotes then None
-                    else
-                        try
-                            let iv = deps.Embedder.Embed intent
-                            existingNotes
-                            |> List.map (fun (slug, title, summary) ->
-                                slug, title, summary, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + summary)))
-                            |> List.filter (fun (_, _, _, s) -> s >= deps.NoteSimilarityFloor)
-                            |> List.sortByDescending (fun (_, _, _, s) -> s)
-                            |> List.truncate deps.NoteTopK
-                            |> Some
-                        with _ -> None
-                match shortlist with
-                | Some (_ :: _ as candidates) ->
-                    let candidateText =
-                        candidates
-                        |> List.map (fun (slug, title, summary, _) -> sprintf "slug: %s\ntitle: %s\nsummary: %s" slug title summary)
-                        |> String.concat "\n\n"
-                    let payload = sprintf "New note intent: %s\n\nCandidate notes:\n%s" intent candidateText
-                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.noteMatchSystem payload) with
-                    | Error _ -> createNewNote intent
-                    | Ok m ->
-                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
-                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
-                        match m.Match, matched with
-                        | true, Some (slug, _, _, _) ->
-                            let path = sprintf "notes/%s.md" slug
-                            try
-                                let existing = MarkdownFile.FromString (deps.Vault.Read path)
-                                match existing.FrontMatter with
-                                | Some fm ->
-                                    let n = Frontmatter.deserialize<Note> fm
-                                    let mergedBody =
-                                        Agent.runConversation deps.Chat [] Prompts.noteUpdateSystem
-                                            (Prompts.noteUpdateUser existing.Content intent msg.Content)
-                                        |> stripFences
-                                    let merged =
-                                        { n with
-                                            LastVerified = isoTimestamp msg.Timestamp
-                                            Context = Array.append (if isNull n.Context then [||] else n.Context) classification.Contexts |> Array.distinct
-                                            PeopleLinked = Array.append (if isNull n.PeopleLinked then [||] else n.PeopleLinked) classification.PeopleMentioned |> Array.distinct }
-                                    deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) mergedBody)
-                                    path
-                                | None -> createNewNote intent
-                            with _ -> createNewNote intent
-                        | _ -> createNewNote intent
-                | _ -> createNewNote intent
+                let buildPayload lines = sprintf "New note intent: %s\n\nCandidate notes:\n%s" intent (String.concat "\n\n" lines)
+                match shortlistAndConfirm deps intent existingNotes deps.NoteSimilarityFloor deps.NoteTopK Prompts.noteMatchSystem buildPayload with
+                | Some slug ->
+                    let path = sprintf "notes/%s.md" slug
+                    try
+                        let existing = MarkdownFile.FromString (deps.Vault.Read path)
+                        match existing.FrontMatter with
+                        | Some fm ->
+                            let n = Frontmatter.deserialize<Note> fm
+                            let mergedBody =
+                                Agent.runConversation deps.Chat [] Prompts.noteUpdateSystem
+                                    (Prompts.noteUpdateUser existing.Content intent msg.Content)
+                                |> stripFences
+                            let merged =
+                                { n with
+                                    LastVerified = isoTimestamp msg.Timestamp
+                                    Context = Array.append (if isNull n.Context then [||] else n.Context) classification.Contexts |> Array.distinct
+                                    PeopleLinked = Array.append (if isNull n.PeopleLinked then [||] else n.PeopleLinked) classification.PeopleMentioned |> Array.distinct }
+                            deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize merged) mergedBody)
+                            path
+                        | None -> createNewNote intent
+                    with _ -> createNewNote intent
+                | None -> createNewNote intent
 
             let notePaths = classification.Entities.Notes |> Array.toList |> List.map processNote
 
@@ -617,20 +621,6 @@ module Pipeline =
                     // Fuzzy second chance before creating a stub: shortlist existing people by
                     // embedding similarity and confirm same-person; on match, add this surface
                     // form as an alias instead of creating a duplicate stub.
-                    let addAliasTo (existingPath: string) =
-                        try
-                            let existing = MarkdownFile.FromString (deps.Vault.Read existingPath)
-                            match existing.FrontMatter with
-                            | Some fm ->
-                                let ep = Frontmatter.deserialize<Person> fm
-                                let existingAliases = if isNull ep.Aliases then [||] else ep.Aliases
-                                let known =
-                                    (Naming.slug ep.Title :: (existingAliases |> Array.toList |> List.map Naming.slug)) |> Set.ofList
-                                if not (Set.contains mentionSlug known) then
-                                    let merged = { ep with Aliases = Array.append existingAliases [| name.Trim() |] }
-                                    deps.Vault.Write(existingPath, MarkdownFile.ToString (Frontmatter.serialize merged) existing.Content)
-                            | None -> ()
-                        with _ -> ()
                     let existingPeople =
                         deps.Vault.ListFilesRecursive "people"
                         |> List.choose (fun path ->
@@ -640,40 +630,20 @@ module Pipeline =
                                 | Some fm ->
                                     let p = Frontmatter.deserialize<Person> fm
                                     let aliases = if isNull p.Aliases then "" else String.concat " " (Array.toList p.Aliases)
-                                    Some (Naming.slug p.Title, p.Title, sprintf "%s %s" (if isNull p.Role then "" else p.Role) aliases)
+                                    let role = sprintf "%s %s" (if isNull p.Role then "" else p.Role) aliases
+                                    let slug = Naming.slug p.Title
+                                    Some (slug, p.Title + "\n" + role, sprintf "slug: %s\ntitle: %s\nrole: %s" slug p.Title role)
                                 | None -> None
                             with _ -> None)
-                    let fuzzyMatch =
-                        if List.isEmpty existingPeople then None
-                        else
-                            try
-                                let iv = deps.Embedder.Embed (sprintf "%s\n%s" name (String.concat ", " classification.Contexts))
-                                let shortlist =
-                                    existingPeople
-                                    |> List.map (fun (slug, title, role) ->
-                                        slug, title, role, Similarity.cosine iv (deps.Embedder.Embed (title + "\n" + role)))
-                                    |> List.filter (fun (_, _, _, s) -> s >= deps.PeopleSimilarityFloor)
-                                    |> List.sortByDescending (fun (_, _, _, s) -> s)
-                                    |> List.truncate deps.PeopleTopK
-                                match shortlist with
-                                | [] -> None
-                                | candidates ->
-                                    let candidateText =
-                                        candidates
-                                        |> List.map (fun (slug, title, role, _) -> sprintf "slug: %s\ntitle: %s\nrole: %s" slug title role)
-                                        |> String.concat "\n\n"
-                                    let payload = sprintf "New person mention: %s\nContext: %s\n\nCandidate people:\n%s" name (String.concat ", " classification.Contexts) candidateText
-                                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.personMatchSystem payload) with
-                                    | Ok m when m.Match ->
-                                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
-                                        candidates |> List.tryPick (fun (slug, _, _, _) -> if slug.ToLowerInvariant() = normalized then Some (slug) else None)
-                                    | _ -> None
-                            with _ -> None
-                    match fuzzyMatch with
+                    let buildPayload lines =
+                        sprintf "New person mention: %s\nContext: %s\n\nCandidate people:\n%s"
+                            name (String.concat ", " classification.Contexts) (String.concat "\n\n" lines)
+                    let queryText = sprintf "%s\n%s" name (String.concat ", " classification.Contexts)
+                    match shortlistAndConfirm deps queryText existingPeople deps.PeopleSimilarityFloor deps.PeopleTopK Prompts.personMatchSystem buildPayload with
                     | Some slug ->
                         // resolve the matched person's path from the index and add the alias
                         match resolvePerson index slug with
-                        | Some existingPath -> addAliasTo existingPath
+                        | Some existingPath -> addPersonAlias deps.Vault existingPath name mentionSlug
                         | None -> ()
                     | None ->
                     let user =
@@ -697,19 +667,7 @@ module Pipeline =
                     match resolvePerson index canonicalSlug with
                     | Some existingPath ->
                         // Canonical name already exists — record this surface form as an alias instead of duplicating.
-                        try
-                            let existing = MarkdownFile.FromString (deps.Vault.Read existingPath)
-                            match existing.FrontMatter with
-                            | Some fm ->
-                                let ep = Frontmatter.deserialize<Person> fm
-                                let existingAliases = if isNull ep.Aliases then [||] else ep.Aliases
-                                let known =
-                                    (Naming.slug ep.Title :: (existingAliases |> Array.toList |> List.map Naming.slug)) |> Set.ofList
-                                if not (Set.contains mentionSlug known) then
-                                    let merged = { ep with Aliases = Array.append existingAliases [| name.Trim() |] }
-                                    deps.Vault.Write(existingPath, MarkdownFile.ToString (Frontmatter.serialize merged) existing.Content)
-                            | None -> ()
-                        with _ -> ()
+                        addPersonAlias deps.Vault existingPath name mentionSlug
                     | None ->
                         // Genuinely new person: file by canonical slug under a role-derived context.
                         let ctx =
