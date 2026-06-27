@@ -1,7 +1,9 @@
 module Nameless.TaskList.Core.Tests.EmailPollerTests
 
 open System
+open System.IO
 open Nameless.TaskList.Core
+open Nameless.TaskList.Core.Adapters
 open Nameless.TaskList.Core.Ports
 open Xunit
 
@@ -53,3 +55,36 @@ let ``fetch maps raw mail to email-platform ChatMessages`` () =
     let mb = FakeMailbox(7u, [ mkRaw 10u "<a>" ])
     let mails, _ = EmailPoller.fetch mb { UidValidity = 7u; LastUid = 0u } "INBOX"
     Assert.Equal("email", (List.head mails).Platform)
+
+[<Fact>]
+let ``ImapMessageSource returns a buffered message and recent same-sender mail`` () =
+    let src = ImapMessageSource()
+    let baseTs = DateTime(2026, 6, 15, 14, 0, 0)
+    let mk id ts =
+        { (Email.toChatMessage (mkRaw 1u id)) with ChatJid = "a@b.com"; Timestamp = ts }
+    let older = mk "<older>" (baseTs.AddMinutes -10.0)
+    let target = mk "<target>" baseTs
+    src.Put older
+    src.Put target
+    let isrc = src :> IMessageSource
+    Assert.Equal(Some target, isrc.GetMessage("<target>", "a@b.com"))
+    let recent = isrc.GetRecent("a@b.com", baseTs, "<target>")
+    Assert.Equal(1, List.length recent)
+    Assert.Equal("<older>", (List.head recent).Id)
+
+[<Fact>]
+let ``ImapMessageSource returns None for an unknown id`` () =
+    let isrc = ImapMessageSource() :> IMessageSource
+    Assert.Equal(None, isrc.GetMessage("<nope>", "a@b.com"))
+
+[<Fact>]
+let ``FileSystemEmailCursorStore round-trips, defaulting to zero when missing`` () =
+    let path = Path.Combine(Path.GetTempPath(), "cursor-" + Guid.NewGuid().ToString("N") + ".json")
+    try
+        let store = FileSystemEmailCursorStore(path) :> IEmailCursorStore
+        Assert.Equal({ UidValidity = 0u; LastUid = 0u }, store.Load())
+        store.Save { UidValidity = 7u; LastUid = 42u }
+        let reloaded = FileSystemEmailCursorStore(path) :> IEmailCursorStore
+        Assert.Equal({ UidValidity = 7u; LastUid = 42u }, reloaded.Load())
+    finally
+        (try File.Delete path with _ -> ())
