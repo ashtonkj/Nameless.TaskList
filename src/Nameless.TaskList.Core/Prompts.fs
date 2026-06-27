@@ -59,7 +59,7 @@ For each message, respond ONLY with a JSON object in this exact format:
   "urgency": "critical/high/medium/low/none",
   "people_mentioned": ["only specific, identifiable INDIVIDUALS — a person's name, or a singular role pointing to one identifiable person (e.g. \"Ethan's class teacher\"). EXCLUDE generic groups or plurals (\"parents\", \"families\", \"class teachers\"), organizations/teams/units and their acronyms (e.g. \"AR\", \"JOC\", \"law enforcement\"), and pronouns or vague references (\"the client\", \"her\"). Empty array if none."],
   "entities": {
-    "tasks": ["concrete next actions the KB OWNER must PERSONALLY do (e.g. \"Book Ethan's flu vaccine\", \"Pay school fees\"). Apply a strict owner-only test: if the action is someone else's job, output NOTHING for it. EXCLUDE, in particular: (a) instructions a broadcast/newsletter gives to its general audience — e.g. a utility telling customers to log calls or use an app — these are never the owner's tasks; (b) operational / security / dispatch activity and anyone else's handling of an incident — e.g. \"notify the security team\", \"dispatch a response\", \"monitor the cameras\"; (c) another person's errand or a third party's action; (d) generic \"monitor / review / follow up\" reactions to status or incident reports. Do not split one action into near-duplicate tasks. Empty array if none."],
+    "tasks": ["concrete next actions the KB OWNER must PERSONALLY do (e.g. \"Book Ethan's flu vaccine\", \"Pay school fees\"). Apply a strict owner-only test: if the action is someone else's job, output NOTHING for it. EXCLUDE, in particular: (a) instructions a broadcast/newsletter gives to its general audience — e.g. a utility telling customers to log calls or use an app — these are never the owner's tasks; (b) operational / security / dispatch activity and anyone else's handling of an incident — e.g. \"notify the security team\", \"dispatch a response\", \"monitor the cameras\"; (c) another person's errand or a third party's action; (d) generic \"monitor / review / follow up\" reactions to status or incident reports; (e) action items written inside an announcement, invitation, or event notice the owner merely RECEIVES — e.g. a school's picnic notice telling parents what to bring or do, or an organiser's checklist — these are the organiser's actions, so capture the event itself (under events) but NOT its internal instructions. Do not split one action into near-duplicate tasks. Empty array if none."],
     "events": ["only SCHEDULED or UPCOMING occurrences the owner would put on a calendar — appointments, meetings, planned activities, deadlines with a specific date/time. Do NOT create events for past incidents, situational/security/dispatch reports, alerts, or status updates of things that already happened; those belong to a topic, not the calendar. Empty array if none."],
     "commitments": ["brief description of any deadlines or obligations mentioned"],
     "notes": ["only DURABLE reference facts worth keeping long-term and across conversations — account/policy/membership numbers, addresses, contact details, medical records, standing preferences. The concrete fact must be STATED in the message (the actual number/address/detail or a reusable procedure); do NOT create a note merely because the message says such a fact is NEEDED, missing, or will be obtained later. Do NOT create notes for per-message observations, status updates, or anything specific to a single ongoing conversation; those belong to the topic. Empty array if none."]
@@ -71,6 +71,15 @@ A message is noise if it is:
 - A simple acknowledgement ("ok", "thanks", "👍", "noted")
 - Off-topic social chat with no actionable content
 - A forwarded joke, meme description, or chain message
+
+TASK DISCIPLINE — apply before filling "tasks":
+A task exists ONLY when the OWNER is the one who must personally act. For every candidate, ask:
+"is this MY job, or someone else's?" If it is not unambiguously the owner's own next action, leave it out.
+In particular, an announcement, invitation, or event notice the owner RECEIVES (e.g. a school's picnic
+notice that says "remind parents to label the teddy", "bring a named cuddly toy", "arrange photos") is
+NOT a source of owner tasks — those are the organiser's instructions to attendees. Capture the occasion
+itself under "events" and leave "tasks" empty. The same goes for anything addressed to a general audience
+or describing another person's or organisation's action.
 
 If noise is true, all other fields except noise_reason may be null or empty.
 Do not add explanation outside the JSON object.
