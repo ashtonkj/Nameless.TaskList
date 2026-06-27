@@ -103,6 +103,26 @@ module Program =
                 let logger = sp.GetRequiredService<ILogger<ImapPollerService>>()
                 new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, initialBackfill, logger)) |> ignore
 
+        // WhatsApp channel: register the LISTEN/NOTIFY listener only when enabled.
+        if cfg.["WhatsApp:Listen:Enabled"] = "true" then
+            builder.Services.AddHostedService<WhatsAppListenerService>(fun sp ->
+                let connStr = cfg.GetConnectionString("WhatsApp")
+                let listener = new NpgsqlNotificationListener(connStr) :> INotificationListener
+                let cursorPath = System.IO.Path.Combine(cfg.["Vault:Root"], ".taskmeister", "whatsapp-listen-cursor.json")
+                let cursorStore = new FileSystemListenCursorStore(cursorPath) :> IListenCursorStore
+                let messages = sp.GetRequiredService<IMessageSource>()
+                let buildListenerDeps () =
+                    buildDeps
+                        messages
+                        (sp.GetRequiredService<IVault>())
+                        (sp.GetRequiredService<IChatClient>())
+                        (sp.GetRequiredService<IEmbedder>())
+                        (sp.GetRequiredService<IVision>())
+                        (sp.GetRequiredService<ITranscriber>())
+                let reconnectSeconds = match System.Int32.TryParse(cfg.["WhatsApp:Listen:ReconnectSeconds"]) with | true, n -> n | _ -> 10
+                let logger = sp.GetRequiredService<ILogger<WhatsAppListenerService>>()
+                new WhatsAppListenerService(listener, cursorStore, messages, buildListenerDeps, "whatsapp_new_message", reconnectSeconds, logger)) |> ignore
+
         let app = builder.Build()
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, ITranscriber, Microsoft.AspNetCore.Http.IResult>(
