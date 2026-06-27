@@ -32,5 +32,7 @@ type ImapPollerService
                         logger.LogInformation("IMAP poll processed {Count} message(s)", List.length mails)
                 with ex ->
                     logger.LogWarning(ex, "IMAP poll failed; will retry next interval")
-                do! Task.Delay(TimeSpan.FromSeconds(float pollSeconds), stoppingToken)
+                try
+                    do! Task.Delay(TimeSpan.FromSeconds(float pollSeconds), stoppingToken)
+                with :? OperationCanceledException -> ()
         } :> Task
