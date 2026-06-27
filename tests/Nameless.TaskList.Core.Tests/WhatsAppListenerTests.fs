@@ -132,3 +132,18 @@ let ``runSession skips an unparseable payload without dispatching or dying`` () 
         "whatsapp_new_message" (fun s -> skipped.Add s) CancellationToken.None
     Assert.Equal<string list>([ "process:<b>" ], List.ofSeq events)   // good one still processed
     Assert.Equal(1, skipped.Count)                                    // bad one logged
+
+open System.IO
+open Nameless.TaskList.Core.Adapters
+
+[<Fact>]
+let ``FileSystemListenCursorStore round-trips, defaulting to MinValue when missing`` () =
+    let path = Path.Combine(Path.GetTempPath(), "wa-cursor-" + Guid.NewGuid().ToString("N") + ".json")
+    try
+        let store = FileSystemListenCursorStore(path) :> IListenCursorStore
+        Assert.Equal({ Since = DateTime.MinValue }, store.Load())
+        let c = { Since = DateTime(2026, 6, 18, 12, 0, 0) }
+        store.Save c
+        Assert.Equal(c, (FileSystemListenCursorStore(path) :> IListenCursorStore).Load())
+    finally
+        (try File.Delete path with _ -> ())
