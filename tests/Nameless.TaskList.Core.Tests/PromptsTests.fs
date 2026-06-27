@@ -8,7 +8,8 @@ open Xunit
 let private histMsg (sender: string) (content: string) (mediaType: string) : ChatMessage =
     { Id = "x"; ChatJid = "jid"; ChatName = "c"; NormalizedChatName = "c"; IsGroup = false
       SenderId = "s"; SenderName = sender; SenderPushName = null; SenderSavedName = null
-      SenderBusinessName = null; IsFromMe = false; Content = content; MediaType = mediaType
+      SenderBusinessName = null; IsFromMe = false; Platform = "whatsapp-direct"; IsBroadcast = false
+      Content = content; MediaType = mediaType
       FileName = null; AlbumId = null; AlbumIndex = None; Timestamp = DateTime(2026, 6, 24) }
 
 [<Fact>]

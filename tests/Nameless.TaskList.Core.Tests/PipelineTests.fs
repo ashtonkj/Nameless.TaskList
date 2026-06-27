@@ -22,7 +22,7 @@ let sampleMessage () : ChatMessage =
     { Id = "M1"; ChatJid = "27800000000@s.whatsapp.net"; ChatName = "Wife"
       NormalizedChatName = "Wife"; IsGroup = false; SenderId = "27800000000"
       SenderName = "Wife"; SenderPushName = "Wife"; SenderSavedName = "Wife"
-      SenderBusinessName = null; IsFromMe = false
+      SenderBusinessName = null; IsFromMe = false; Platform = "whatsapp-direct"; IsBroadcast = false
       Content = "Can you call Acrobranch tomorrow about the 19th?"
       MediaType = null; FileName = null; AlbumId = null; AlbumIndex = None
       Timestamp = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc) }
@@ -676,7 +676,8 @@ let ``broadcast channel suppresses task event and commitment extraction`` () =
     let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Power outage"}"""
     let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
     let chat = FakeChatClient([ classify ])
-    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    let broadcastMsg = { sampleMessage () with IsBroadcast = true }
+    let d = deps (FakeMessages(Some broadcastMsg)) vault chat
     match Pipeline.processMessage d "M1" "120363241214508891@newsletter" with
     | Logged ->
         let has prefix = vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith(prefix: string))
@@ -687,6 +688,25 @@ let ``broadcast channel suppresses task event and commitment extraction`` () =
         let msg = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith "messages/")
         Assert.Contains("noise: false", vault.Files.[msg])
     | other -> failwithf "expected Logged, got %A" other
+
+[<Fact>]
+let ``an email message writes a platform-email channel file under channels-email`` () =
+    let vault = FakeVault()
+    let classify = Responses.final """{"noise":true,"noise_reason":"chit-chat","contexts":[],"intent":"","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ classify ])
+    let emailMsg =
+        { sampleMessage () with
+            Platform = "email"; ChatJid = "practice@example.com"
+            NormalizedChatName = "Dr Naidoo Practice"; Id = "<m1@example.com>" }
+    let d = deps (FakeMessages(Some emailMsg)) vault chat
+    match Pipeline.processMessage d "<m1@example.com>" "practice@example.com" with
+    | ProcessedNoise ->
+        let channel = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith "channels/")
+        Assert.StartsWith("channels/email/", channel)
+        Assert.Contains("platform: email", vault.Files.[channel])
+        let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith "messages/")
+        Assert.StartsWith("messages/email-dr-naidoo-practice/", msgKey)
+    | other -> failwithf "expected ProcessedNoise, got %A" other
 
 [<Fact>]
 let ``a created task body wikilinks a resolved person it names`` () =

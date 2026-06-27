@@ -165,6 +165,8 @@ type ChatMessage =
         SenderSavedName: string
         SenderBusinessName: string
         IsFromMe: bool
+        Platform: string
+        IsBroadcast: bool
         Content: string
         MediaType: string
         FileName: string

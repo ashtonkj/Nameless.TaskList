@@ -233,6 +233,13 @@ module Naming =
     let messagePath (channelSlug: string) (ts: System.DateTime) : string =
         sprintf "messages/%s/%s" channelSlug (messageFileName ts)
 
+    /// First 8 hex chars of the SHA-1 of the input — a short, stable disambiguator for
+    /// email message filenames (timestamp-to-the-second alone can collide for one sender).
+    let private shortHash (input: string) : string =
+        use sha = System.Security.Cryptography.SHA1.Create()
+        let bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(if isNull input then "" else input))
+        (System.Convert.ToHexString bytes).ToLowerInvariant().Substring(0, 8)
+
     let taskPath (title: string) : string =
         sprintf "tasks/pending/%s.md" (slug title)
 
@@ -259,6 +266,21 @@ module Naming =
 
     let channelPath (channelSlug: string) : string =
         sprintf "channels/whatsapp/%s.md" channelSlug
+
+    /// Channel file path for a platform. WhatsApp lands under channels/whatsapp (unchanged);
+    /// email lands under channels/email (DESIGN §3).
+    let channelPathFor (platform: string) (channelSlug: string) : string =
+        let dir = if platform = "email" then "email" else "whatsapp"
+        sprintf "channels/%s/%s.md" dir channelSlug
+
+    /// Message file path for a platform. WhatsApp is byte-identical to messagePath. Email
+    /// namespaces the folder (messages/email-<slug>/) and appends a message-id hash so two
+    /// mails from one sender in the same second never collide (idempotency depends on it).
+    let messagePathFor (platform: string) (channelSlug: string) (ts: System.DateTime) (messageId: string) : string =
+        if platform = "email" then
+            let fn = (messageFileName ts).Replace(".md", sprintf "-%s.md" (shortHash messageId))
+            sprintf "messages/email-%s/%s" channelSlug fn
+        else messagePath channelSlug ts
 
     let digestPath (day: System.DateTime) (kind: string) : string =
         sprintf "digests/%04d-%02d-%02d-%s.md" day.Year day.Month day.Day kind

@@ -212,6 +212,10 @@ module Adapters =
           SenderSavedName = getStringOrNull reader "sender_saved_name"
           SenderBusinessName = getStringOrNull reader "sender_business_name"
           IsFromMe = reader.GetBoolean(reader.GetOrdinal("is_from_me"))
+          Platform = (if reader.GetBoolean(reader.GetOrdinal("is_group")) then "whatsapp-group" else "whatsapp-direct")
+          IsBroadcast =
+            (let j = reader.GetString(reader.GetOrdinal("chat_jid"))
+             j.EndsWith("@newsletter") || j.EndsWith("@broadcast"))
           Content = getStringOrNull reader "content"
           MediaType = getStringOrNull reader "media_type"
           FileName = getStringOrNull reader "filename"

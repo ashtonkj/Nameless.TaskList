@@ -32,12 +32,6 @@ module Pipeline =
 
     let private isoTimestamp (ts: System.DateTime) = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
 
-    /// WhatsApp newsletters (@newsletter) and statuses (@broadcast) are one-to-many feeds.
-    /// Their imperative content is addressed to the whole audience, never the owner personally.
-    let private isBroadcastChannel (chatJid: string) =
-        let j = if isNull chatJid then "" else chatJid
-        j.EndsWith("@newsletter") || j.EndsWith("@broadcast")
-
     /// Terms of endearment / pet names a partner uses ("hey pookie") are not identifiable
     /// people — left in, they spawn a junk person file. Drop them from a mentions list.
     let private endearments =
@@ -164,10 +158,10 @@ module Pipeline =
 
     /// Create-if-missing + activity update for the message's channel file.
     let private updateChannel (deps: PipelineDeps) (msg: ChatMessage) (channelSlug: string) (topic: string option) =
-        let path = Naming.channelPath channelSlug
+        let path = Naming.channelPathFor msg.Platform channelSlug
         let stub : Channel =
             { Type = "Channel"; Title = msg.NormalizedChatName
-              Platform = (if msg.IsGroup then "whatsapp-group" else "whatsapp-direct")
+              Platform = msg.Platform
               Context = ""; People = [||]; SignalWeight = "medium"
               MessageCount = 0; LastProcessed = System.DateTime.MinValue; ActiveTopics = [||] }
         let current, body =
@@ -312,7 +306,7 @@ module Pipeline =
         | None -> NotFound
         | Some msg ->
             let channelSlug = Naming.slug msg.NormalizedChatName
-            let messagePath = Naming.messagePath channelSlug msg.Timestamp
+            let messagePath = Naming.messagePathFor msg.Platform channelSlug msg.Timestamp msg.Id
 
             // Idempotency: one file per message; reprocessing is a no-op.
             if deps.Vault.Exists messagePath then
@@ -386,7 +380,7 @@ module Pipeline =
                 ProcessedNoise
             else
 
-            if isBroadcastChannel chatJid then
+            if msg.IsBroadcast then
                 // Broadcast feeds are one-to-many: log the message, but never thread it into a
                 // topic or extract entities from it.
                 let record : Message =
