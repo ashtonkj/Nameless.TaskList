@@ -36,6 +36,13 @@ module Email =
                     else kept.Add l
             String.Join("\n", kept).Trim()
 
+    /// Subject + body as the message content. The subject often carries the actionable
+    /// signal in email, so it must reach the classifier; blank subject falls back to body only.
+    let private withSubject (subject: string) (body: string) : string =
+        if String.IsNullOrWhiteSpace subject then body
+        elif String.IsNullOrWhiteSpace body then subject.Trim()
+        else sprintf "%s\n\n%s" (subject.Trim()) body
+
     /// The clean message body: prefer text/plain, fall back to stripped HTML.
     let extractText (email: RawEmail) : string =
         let primary =
@@ -67,7 +74,7 @@ module Email =
           IsFromMe = false
           Platform = "email"
           IsBroadcast = isBulk email
-          Content = extractText email
+          Content = withSubject email.Subject (extractText email)
           MediaType = null
           FileName = null
           AlbumId = null

@@ -65,9 +65,20 @@ let ``toChatMessage maps identity, platform and SAST timestamp`` () =
     Assert.Equal("email", m.Platform)
     Assert.False(m.IsGroup)
     Assert.False(m.IsBroadcast)
-    Assert.Equal("Please book Ethan's flu vaccine.", m.Content.Trim())
+    Assert.Contains("Flu vaccine reminder", m.Content)
+    Assert.Contains("Please book Ethan's flu vaccine.", m.Content)
     // 12:17 UTC shifted to +02:00 SAST
     Assert.Equal(14, m.Timestamp.Hour)
+
+[<Fact>]
+let ``toChatMessage prepends the subject to the body`` () =
+    let m = Email.toChatMessage { raw () with Subject = "Parent meeting"; TextBody = "It is on Friday." }
+    Assert.Equal("Parent meeting\n\nIt is on Friday.", m.Content)
+
+[<Fact>]
+let ``toChatMessage with a blank subject is body only`` () =
+    let m = Email.toChatMessage { raw () with Subject = "   "; TextBody = "Just the body." }
+    Assert.Equal("Just the body.", m.Content.Trim())
 
 [<Fact>]
 let ``toChatMessage marks bulk mail as broadcast`` () =
