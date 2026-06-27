@@ -38,6 +38,9 @@ type ITranscriber =
 /// Reads mail from an IMAP folder. Behind a port so the poller is testable offline.
 type IMailbox =
     abstract member UidValidity : folder: string -> uint32
+    /// The largest existing UID in the folder (0 when empty) — read cheaply (no bodies) so the
+    /// poller can seed its cursor forward on first run without fetching the whole mailbox.
+    abstract member HighestUid : folder: string -> uint32
     abstract member FetchSince : folder: string * sinceUid: uint32 -> RawEmail list
 
 /// Persists the per-account IMAP poll cursor.

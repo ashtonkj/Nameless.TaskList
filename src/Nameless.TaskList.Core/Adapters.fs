@@ -298,8 +298,8 @@ module Adapters =
             member _.Load() =
                 try
                     if File.Exists path then JsonSerializer.Deserialize<EmailCursor>(File.ReadAllText path)
-                    else { UidValidity = 0u; LastUid = 0u }
-                with _ -> { UidValidity = 0u; LastUid = 0u }
+                    else { UidValidity = 0u; LastUid = 0u; Initialized = false }
+                with _ -> { UidValidity = 0u; LastUid = 0u; Initialized = false }
 
     // ---- IMAP mailbox over MailKit. Synchronous by design, like the other adapters. ----
     type MailKitMailbox(host: string, port: int, useSsl: bool, user: string, password: string) =
@@ -316,6 +316,16 @@ module Adapters =
                     fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
                     let v = fld.UidValidity
                     v
+                finally
+                    client.Disconnect(true, CancellationToken.None)
+            member _.HighestUid(folder) =
+                use client = connect ()
+                try
+                    let fld = client.GetFolder(folder)
+                    fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
+                    // UID SEARCH ALL returns just the UIDs (no bodies) — cheap to take the max.
+                    let uids = fld.Search(SearchQuery.All, CancellationToken.None)
+                    if uids.Count = 0 then 0u else (uids |> Seq.map (fun u -> u.Id) |> Seq.max)
                 finally
                     client.Disconnect(true, CancellationToken.None)
             member _.FetchSince(folder, sinceUid) =

@@ -85,6 +85,8 @@ module Program =
                 let useSsl = cfg.["Imap:UseSsl"] <> "false"
                 let folder = if System.String.IsNullOrWhiteSpace cfg.["Imap:Folder"] then "INBOX" else cfg.["Imap:Folder"]
                 let pollSeconds = match System.Int32.TryParse(cfg.["Imap:PollSeconds"]) with | true, n -> n | _ -> 120
+                // Newest N messages to process on first enable / UIDVALIDITY reset (0 = go-forward only).
+                let initialBackfill = match System.UInt32.TryParse(cfg.["Imap:InitialBackfill"]) with | true, n -> n | _ -> 0u
                 let mailbox =
                     MailKitMailbox(cfg.["Imap:Host"], port, useSsl, cfg.["Imap:User"], cfg.["Imap:Password"]) :> IMailbox
                 let cursorPath = System.IO.Path.Combine(cfg.["Vault:Root"], ".taskmeister", "email-cursor.json")
@@ -99,7 +101,7 @@ module Program =
                         (sp.GetRequiredService<IVision>())
                         (sp.GetRequiredService<ITranscriber>())
                 let logger = sp.GetRequiredService<ILogger<ImapPollerService>>()
-                new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, logger)) |> ignore
+                new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, initialBackfill, logger)) |> ignore
 
         let app = builder.Build()
 
