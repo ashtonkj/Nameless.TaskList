@@ -654,6 +654,11 @@ let private seedPerson (vault: FakeVault) (path: string) (title: string) (contex
     vault.Seed(path, sprintf "---\ntype: Person\ntitle: %s\nrole: spouse\ncontext: [%s]\nchannel: \"\"\nphone: \"\"\nemail: \"\"\ntags: []\naliases: %s\n---\nstub\n" title context aliasYaml)
 
 [<Fact>]
+let ``stripEndearments removes pet names but keeps real names`` () =
+    let out = Pipeline.stripEndearments [| "Pookie"; "Dr Greef"; " babe "; "Nancy"; "LOVE" |]
+    Assert.Equal<string array>([| "Dr Greef"; "Nancy" |], out)
+
+[<Fact>]
 let ``broadcast channel suppresses task event and commitment extraction`` () =
     let vault = FakeVault()
     // The classifier returns a task, an event and a commitment — all must be dropped for a

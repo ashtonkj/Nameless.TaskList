@@ -37,6 +37,18 @@ module Pipeline =
         let j = if isNull chatJid then "" else chatJid
         j.EndsWith("@newsletter") || j.EndsWith("@broadcast")
 
+    /// Terms of endearment / pet names a partner uses ("hey pookie") are not identifiable
+    /// people — left in, they spawn a junk person file. Drop them from a mentions list.
+    let private endearments =
+        set [ "pookie"; "babe"; "baby"; "bae"; "boo"; "hun"; "hon"; "honey"; "sweetie"
+              "sweetheart"; "sweetpea"; "love"; "lovey"; "lovie"; "darling"; "dear"; "dearest"
+              "hubby"; "wifey"; "snookums"; "cutie"; "pumpkin"; "sugar"; "my love"; "my dear"
+              "my darling"; "my dear wife"; "my dear husband" ]
+    let stripEndearments (people: string array) : string array =
+        if isNull people then [||]
+        else people |> Array.filter (fun p ->
+            not (endearments.Contains((if isNull p then "" else p).Trim().ToLowerInvariant())))
+
     /// The later of an existing ISO-8601 timestamp and a new message time. Topic
     /// last_updated must never regress when an out-of-order (older) message is matched
     /// into a topic, which would otherwise push last_updated below first_seen.
@@ -352,10 +364,13 @@ module Pipeline =
             // Suppress task/event/commitment extraction for them; the topic (to track the
             // thread) and any durable notes still get written.
             let classification =
-                if isBroadcastChannel chatJid then
-                    { classification with
-                        Entities = { classification.Entities with Tasks = [||]; Events = [||]; Commitments = [||] } }
-                else classification
+                let c =
+                    if isBroadcastChannel chatJid then
+                        { classification with
+                            Entities = { classification.Entities with Tasks = [||]; Events = [||]; Commitments = [||] } }
+                    else classification
+                // Drop terms of endearment the model mistakes for named people.
+                { c with PeopleMentioned = stripEndearments c.PeopleMentioned }
 
             if classification.Noise then
                 // Minimal message record, then stop.
