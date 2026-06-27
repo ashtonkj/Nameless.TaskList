@@ -28,7 +28,8 @@ module Program =
         builder.Services.AddSingleton<HttpClient>(fun _ -> new HttpClient()) |> ignore
         builder.Services.AddSingleton<IChatClient>(fun sp ->
             let http = sp.GetRequiredService<HttpClient>()
-            OllamaChatClient(http, cfg.["Ollama:Url"], cfg.["Ollama:Model"]) :> IChatClient) |> ignore
+            let numCtx = match System.Int32.TryParse(cfg.["Ollama:NumCtx"]) with | true, n -> n | _ -> 0
+            OllamaChatClient(http, cfg.["Ollama:Url"], cfg.["Ollama:Model"], numCtx) :> IChatClient) |> ignore
         builder.Services.AddSingleton<IEmbedder>(fun sp ->
             let http = sp.GetRequiredService<HttpClient>()
             let embedModel = if isNull cfg.["Ollama:EmbedModel"] then "nomic-embed-text" else cfg.["Ollama:EmbedModel"]

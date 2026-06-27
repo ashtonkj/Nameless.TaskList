@@ -54,6 +54,42 @@ let ``OllamaChatClient sends a non-empty request body with model and messages`` 
     finally
         listener.Stop()
 
+// When constructed with a positive num_ctx, the client must pin Ollama's context window
+// (options.num_ctx) so large-default-context models (e.g. granite4.1 → 128K) don't
+// allocate a multi-GB KV cache that spills to swap and never loads. The default 3-arg
+// form must NOT send options (server default preserved).
+[<Fact>]
+let ``OllamaChatClient includes options.num_ctx only when numCtx is set`` () =
+    let capture (port: int) (client: HttpClient -> Ports.IChatClient) =
+        let listener = new HttpListener()
+        listener.Prefixes.Add(sprintf "http://localhost:%d/" port)
+        listener.Start()
+        let captured = ref ""
+        let worker =
+            Thread(fun () ->
+                let ctx = listener.GetContext()
+                use reader = new StreamReader(ctx.Request.InputStream)
+                captured.Value <- reader.ReadToEnd()
+                let payload = Text.Encoding.UTF8.GetBytes("""{"model":"m","message":{"role":"assistant","content":"ok"},"done":true}""")
+                ctx.Response.StatusCode <- 200
+                ctx.Response.OutputStream.Write(payload, 0, payload.Length)
+                ctx.Response.OutputStream.Close())
+        worker.IsBackground <- true
+        worker.Start()
+        try
+            use http = new HttpClient()
+            (client http).Chat([| (UserMessage { Content = "hi" }).Value |], [||]) |> ignore
+            worker.Join(TimeSpan.FromSeconds 5.0) |> ignore
+            captured.Value
+        finally
+            listener.Stop()
+
+    let withCtx = capture 11695 (fun http -> OllamaChatClient(http, "http://localhost:11695", "granite", 8192) :> Ports.IChatClient)
+    Assert.Contains("\"num_ctx\":8192", withCtx.Replace(" ", ""))
+
+    let noCtx = capture 11696 (fun http -> OllamaChatClient(http, "http://localhost:11696", "granite") :> Ports.IChatClient)
+    Assert.DoesNotContain("num_ctx", noCtx)
+
 [<Fact>]
 let ``OllamaEmbedder posts model+input to /api/embed and parses embeddings[0]`` () =
     let listener = new HttpListener()

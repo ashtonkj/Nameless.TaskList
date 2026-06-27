@@ -65,10 +65,18 @@ module Adapters =
           tools: obj array
           stream: bool }
 
-    type OllamaChatClient(httpClient: HttpClient, url: string, model: string) =
+    type OllamaChatClient(httpClient: HttpClient, url: string, model: string, numCtx: int) =
+        // Back-compat 3-arg form: no explicit context cap (numCtx = 0 → server default).
+        new(httpClient: HttpClient, url: string, model: string) = OllamaChatClient(httpClient, url, model, 0)
         interface IChatClient with
             member _.Chat(messages, tools) =
-                let body = { model = model; messages = messages; tools = tools; stream = false }
+                // When numCtx > 0 we pin Ollama's context window. Some models default to a
+                // huge window (e.g. granite4.1 → 128K), which allocates a multi-GB KV cache
+                // that spills to CPU/swap and never loads. An explicit num_ctx avoids that.
+                let body : obj =
+                    if numCtx > 0
+                    then box {| model = model; messages = messages; tools = tools; stream = false; options = {| num_ctx = numCtx |} |}
+                    else box { model = model; messages = messages; tools = tools; stream = false }
                 let mediaType = MediaTypeHeaderValue.Parse("application/json")
                 let content = JsonContent.Create(body, mediaType, JsonSerializerOptions(JsonSerializerDefaults.Web))
                 let endpoint = url.TrimEnd('/') + "/api/chat"
