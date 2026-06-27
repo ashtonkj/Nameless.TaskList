@@ -446,8 +446,8 @@ module Pipeline =
                 { Prompt = Prompts.taskCreateSystem
                   BuildUser =
                     (fun intent ->
-                        sprintf "Message intent: %s\nRaw message: %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
-                            intent msg.Content (String.concat ", " classification.Contexts) classification.Urgency messagePath)
+                        sprintf "Message intent: %s\nRaw message: %s\nMessage reference date (resolve relative dates like \"tomorrow\" against this): %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
+                            intent msg.Content (isoTimestamp msg.Timestamp) (String.concat ", " classification.Contexts) classification.Urgency messagePath)
                   Interpret =
                     (fun stripped intent ->
                         try
@@ -834,7 +834,13 @@ module Pipeline =
             // --- Step: update the topic body (best-effort; logged warning on failure) ---
             (try
                 let existing = MarkdownFile.FromString (deps.Vault.Read topicPath)
-                let user = Prompts.topicUpdateUser historyText existing.Content msg.Content classification.Intent
+                // Deliberately NOT passing conversation history here: the topic body must
+                // reflect only the topic's own messages. Capable models (granite, 12b) treat
+                // a history block as source material and copy unrelated facts from adjacent
+                // messages into the body. The new message's own content (msg.Content) still
+                // flows in directly; history remains available to the classify step, where it
+                // disambiguates meaning without polluting stored prose.
+                let user = Prompts.topicUpdateUser "" existing.Content msg.Content classification.Intent
                 let newBody = Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user
                 match existing.FrontMatter with
                 | Some fm ->

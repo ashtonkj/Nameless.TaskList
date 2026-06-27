@@ -617,7 +617,7 @@ let ``classify call includes recent conversation history`` () =
     Assert.Contains("Message to classify:", classifyUserMsg)
 
 [<Fact>]
-let ``topic-update call also receives recent conversation history`` () =
+let ``topic-update call is NOT given conversation history so adjacent messages cannot bleed into the body`` () =
     let vault = FakeVault()
     let prior =
         { sampleMessage () with
@@ -632,8 +632,12 @@ let ``topic-update call also receives recent conversation history`` () =
     Pipeline.processMessage d "M1" "jid" |> ignore
     // Third Chat call (index 2) is the topic-update; index 1 is its user message.
     let topicUpdateUserMsg = (chat.Received.[2].[1] :?> UserMessage).Content
-    Assert.Contains("Are you free for Ethan's party on the 19th?", topicUpdateUserMsg)
-    Assert.Contains("Recent conversation", topicUpdateUserMsg)
+    // The prior message and any history block must NOT reach the topic-body step.
+    Assert.DoesNotContain("Are you free for Ethan's party on the 19th?", topicUpdateUserMsg)
+    Assert.DoesNotContain("Recent conversation", topicUpdateUserMsg)
+    // But the classify call (index 0) must still receive history for disambiguation.
+    let classifyUserMsg = (chat.Received.[0].[1] :?> UserMessage).Content
+    Assert.Contains("Are you free for Ethan's party on the 19th?", classifyUserMsg)
 
 // A message whose sender mentions one person, with configurable people_mentioned.
 let private personMessage () : ChatMessage =
