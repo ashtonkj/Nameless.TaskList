@@ -60,3 +60,41 @@ let ``relationshipPath orders slugs alphabetically`` () =
 [<Fact>]
 let ``relationshipPath is order-independent`` () =
     Assert.Equal(Naming.relationshipPath "ethan" "dr-naidoo", Naming.relationshipPath "dr-naidoo" "ethan")
+
+[<Fact>]
+let ``channelPathFor email nests under channels-email`` () =
+    Assert.Equal("channels/email/dr-naidoo-practice.md", Naming.channelPathFor "email" "dr-naidoo-practice")
+
+[<Fact>]
+let ``channelPathFor whatsapp keeps the whatsapp dir`` () =
+    Assert.Equal("channels/whatsapp/wife.md", Naming.channelPathFor "whatsapp-direct" "wife")
+
+[<Fact>]
+let ``channelPathFor whatsapp-group keeps the whatsapp dir`` () =
+    Assert.Equal("channels/whatsapp/family.md", Naming.channelPathFor "whatsapp-group" "family")
+
+[<Fact>]
+let ``messagePathFor whatsapp matches the legacy path`` () =
+    let ts = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc)
+    Assert.Equal("messages/wife/2026-06-15T14-17-45.md", Naming.messagePathFor "whatsapp-direct" "wife" ts "ignored")
+
+[<Fact>]
+let ``messagePathFor email namespaces the folder and hashes the message id`` () =
+    let ts = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc)
+    let p = Naming.messagePathFor "email" "dr-naidoo-practice" ts "<abc@mail>"
+    Assert.StartsWith("messages/email-dr-naidoo-practice/2026-06-15T14-17-45-", p)
+    Assert.EndsWith(".md", p)
+
+[<Fact>]
+let ``messagePathFor email is stable for the same message id`` () =
+    let ts = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc)
+    Assert.Equal<string>(
+        Naming.messagePathFor "email" "c" ts "<id-1@mail>",
+        Naming.messagePathFor "email" "c" ts "<id-1@mail>")
+
+[<Fact>]
+let ``messagePathFor email differs for different message ids in the same second`` () =
+    let ts = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc)
+    Assert.NotEqual<string>(
+        Naming.messagePathFor "email" "c" ts "<id-1@mail>",
+        Naming.messagePathFor "email" "c" ts "<id-2@mail>")

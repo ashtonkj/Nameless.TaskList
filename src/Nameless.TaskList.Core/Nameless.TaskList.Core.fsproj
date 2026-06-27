@@ -6,7 +6,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <Compile Include="Library.fs"/>
+        <Compile Include="Library.fs" />
         <Compile Include="KnowledgeBase.fs" />
         <Compile Include="Conversation.fs" />
         <Compile Include="Ports.fs" />
@@ -16,6 +16,7 @@
         <Compile Include="Relationships.fs" />
         <Compile Include="Similarity.fs" />
         <Compile Include="Pipeline.fs" />
+        <Compile Include="Email.fs" />
         <Compile Include="BulkProcessor.fs" />
         <Compile Include="Indexer.fs" />
         <Compile Include="Adapters.fs" />
@@ -25,6 +26,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <PackageReference Include="MailKit" Version="4.17.0" />
       <PackageReference Include="Markdig" Version="1.3.2" />
       <PackageReference Include="YamlDotNet" Version="18.0.0" />
       <PackageReference Include="Npgsql" Version="9.0.2" />

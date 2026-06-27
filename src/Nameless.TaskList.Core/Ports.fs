@@ -34,3 +34,13 @@ type IVision =
 /// Transcribes spoken audio (e.g. a voice note) to plain text.
 type ITranscriber =
     abstract member Transcribe : audioBytes: byte array -> string
+
+/// Reads mail from an IMAP folder. Behind a port so the poller is testable offline.
+type IMailbox =
+    abstract member UidValidity : folder: string -> uint32
+    abstract member FetchSince : folder: string * sinceUid: uint32 -> RawEmail list
+
+/// Persists the per-account IMAP poll cursor.
+type IEmailCursorStore =
+    abstract member Load : unit -> EmailCursor
+    abstract member Save : cursor: EmailCursor -> unit

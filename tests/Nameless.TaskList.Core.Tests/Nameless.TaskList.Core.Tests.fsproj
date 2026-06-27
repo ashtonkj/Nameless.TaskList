@@ -18,6 +18,8 @@
         <Compile Include="PipelineTests.fs" />
         <Compile Include="VaultTests.fs" />
         <Compile Include="IndexerTests.fs" />
+        <Compile Include="EmailTests.fs" />
+        <Compile Include="EmailPollerTests.fs" />
         <Compile Include="Sanity.fs" />
         <Compile Include="WeightsTests.fs" />
         <Compile Include="DigestTests.fs" />

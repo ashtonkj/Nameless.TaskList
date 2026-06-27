@@ -6,6 +6,12 @@ open System.Net.Http
 open System.Net.Http.Headers
 open System.Net.Http.Json
 open System.Text.Json
+open System.Collections.Concurrent
+open System.Threading
+open MailKit
+open MailKit.Net.Imap
+open MailKit.Search
+open MimeKit
 open Npgsql
 open Nameless.TaskList.Core.Conversation
 open Nameless.TaskList.Core.Ports
@@ -212,6 +218,10 @@ module Adapters =
           SenderSavedName = getStringOrNull reader "sender_saved_name"
           SenderBusinessName = getStringOrNull reader "sender_business_name"
           IsFromMe = reader.GetBoolean(reader.GetOrdinal("is_from_me"))
+          Platform = (if reader.GetBoolean(reader.GetOrdinal("is_group")) then "whatsapp-group" else "whatsapp-direct")
+          IsBroadcast =
+            (let j = reader.GetString(reader.GetOrdinal("chat_jid"))
+             j.EndsWith("@newsletter") || j.EndsWith("@broadcast"))
           Content = getStringOrNull reader "content"
           MediaType = getStringOrNull reader "media_type"
           FileName = getStringOrNull reader "filename"
@@ -258,3 +268,81 @@ module Adapters =
                 cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
                 if reader.Read() && not (reader.IsDBNull 0) then Some(reader.GetFieldValue<byte array>(0)) else None
+
+    // ---- Email message source: an in-process buffer the poller fills before invoking the
+    //      pipeline, so GetMessage/GetRecent need no second IMAP round-trip. ----
+    type ImapMessageSource() =
+        let buffer = ConcurrentDictionary<string, ChatMessage>()
+        member _.Put(m: ChatMessage) = buffer.[m.Id] <- m
+        interface IMessageSource with
+            member _.GetMessage(id, _chatJid) =
+                match buffer.TryGetValue id with
+                | true, m -> Some m
+                | _ -> None
+            member _.GetRecent(chatJid, before, excludingId) =
+                buffer.Values
+                |> Seq.filter (fun m -> m.ChatJid = chatJid && m.Timestamp < before && m.Id <> excludingId)
+                |> Seq.sortByDescending (fun m -> m.Timestamp)
+                |> Seq.truncate 5
+                |> List.ofSeq
+            member _.GetMessagesSince(_chatJid, _since) = []
+            member _.GetMediaBytes(_id, _chatJid) = None
+
+    // ---- Email poll cursor over a single JSON file. ----
+    type FileSystemEmailCursorStore(path: string) =
+        interface IEmailCursorStore with
+            member _.Save(cursor) =
+                let dir = Path.GetDirectoryName(path)
+                if not (String.IsNullOrEmpty dir) then Directory.CreateDirectory(dir) |> ignore
+                File.WriteAllText(path, JsonSerializer.Serialize(cursor))
+            member _.Load() =
+                try
+                    if File.Exists path then JsonSerializer.Deserialize<EmailCursor>(File.ReadAllText path)
+                    else { UidValidity = 0u; LastUid = 0u }
+                with _ -> { UidValidity = 0u; LastUid = 0u }
+
+    // ---- IMAP mailbox over MailKit. Synchronous by design, like the other adapters. ----
+    type MailKitMailbox(host: string, port: int, useSsl: bool, user: string, password: string) =
+        let connect () =
+            let client = new ImapClient()
+            client.Connect(host, port, useSsl, CancellationToken.None)
+            client.Authenticate(user, password, CancellationToken.None)
+            client
+        interface IMailbox with
+            member _.UidValidity(folder) =
+                use client = connect ()
+                try
+                    let fld = client.GetFolder(folder)
+                    fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
+                    let v = fld.UidValidity
+                    v
+                finally
+                    client.Disconnect(true, CancellationToken.None)
+            member _.FetchSince(folder, sinceUid) =
+                use client = connect ()
+                try
+                    let fld = client.GetFolder(folder)
+                    fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
+                    // UID range strictly greater than the cursor: [sinceUid+1 .. *].
+                    let range =
+                        UniqueIdRange(UniqueId(fld.UidValidity, sinceUid + 1u), UniqueId.MaxValue)
+                    let uids = fld.Search(SearchQuery.Uids(range), CancellationToken.None)
+                    let results =
+                        [ for uid in uids do
+                            let msg = fld.GetMessage(uid, CancellationToken.None, null)
+                            let fromAddr =
+                                msg.From.Mailboxes |> Seq.tryHead
+                            yield
+                                { MessageId = (if isNull msg.MessageId then "" else msg.MessageId)
+                                  FromAddress = (match fromAddr with Some m -> m.Address | None -> "")
+                                  FromDisplay = (match fromAddr with Some m -> (if String.IsNullOrWhiteSpace m.Name then m.Address else m.Name) | None -> "")
+                                  Date = msg.Date
+                                  Subject = (if isNull msg.Subject then "" else msg.Subject)
+                                  TextBody = (if isNull msg.TextBody then "" else msg.TextBody)
+                                  HtmlBody = (if isNull msg.HtmlBody then "" else msg.HtmlBody)
+                                  ListUnsubscribe = msg.Headers.Contains("List-Unsubscribe")
+                                  Precedence = (let h = msg.Headers.["Precedence"] in if isNull h then "" else h)
+                                  Uid = uid.Id } ]
+                    results
+                finally
+                    client.Disconnect(true, CancellationToken.None)

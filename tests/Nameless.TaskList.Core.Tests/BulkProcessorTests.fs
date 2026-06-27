@@ -19,7 +19,8 @@ type private FakeSince(msgs: ChatMessage list) =
 let private msg (id: string) : ChatMessage =
     { Id = id; ChatJid = "jid"; ChatName = "c"; NormalizedChatName = "c"; IsGroup = false
       SenderId = "s"; SenderName = "s"; SenderPushName = null; SenderSavedName = null
-      SenderBusinessName = null; IsFromMe = false; Content = "x"; MediaType = null
+      SenderBusinessName = null; IsFromMe = false; Platform = "whatsapp-direct"; IsBroadcast = false
+      Content = "x"; MediaType = null
       FileName = null; AlbumId = null; AlbumIndex = None; Timestamp = DateTime(2026, 6, 1) }
 
 let private newJob () : BulkJob =

@@ -117,7 +117,8 @@ type private SinceSource(msgs: ChatMessage list) =
 let private testMsg (id: string) : ChatMessage =
     { Id = id; ChatJid = "jid"; ChatName = "c"; NormalizedChatName = "c"; IsGroup = false
       SenderId = "s"; SenderName = "s"; SenderPushName = null; SenderSavedName = null
-      SenderBusinessName = null; IsFromMe = false; Content = "x"; MediaType = null
+      SenderBusinessName = null; IsFromMe = false; Platform = "whatsapp-direct"; IsBroadcast = false
+      Content = "x"; MediaType = null
       FileName = null; AlbumId = null; AlbumIndex = None; Timestamp = System.DateTime(2026, 6, 1) }
 
 let private pollUntil (predicate: unit -> bool) : bool =
