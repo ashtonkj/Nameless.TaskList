@@ -10,7 +10,8 @@ open Xunit
 [<SkippableFact>]
 let ``NpgsqlNotificationListener receives a payload published on its channel`` () =
     Skip.IfNot(ServiceProbes.postgres.Value, "Postgres not available")
-    let listener = new NpgsqlNotificationListener(Config.connectionString) :> INotificationListener
+    use listenerImpl = new NpgsqlNotificationListener(Config.connectionString)
+    let listener = listenerImpl :> INotificationListener
     listener.Subscribe "whatsapp_new_message"
     // Publish from a second connection.
     use pub = new NpgsqlConnection(Config.connectionString)
