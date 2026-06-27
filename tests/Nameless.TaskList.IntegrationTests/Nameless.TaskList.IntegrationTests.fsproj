@@ -13,6 +13,7 @@
         <Compile Include="AssemblyInfo.fs" />
         <Compile Include="Support.fs" />
         <Compile Include="AdapterIntegrationTests.fs" />
+        <Compile Include="ImapTests.fs" />
         <Compile Include="PipelineIntegrationTests.fs" />
     </ItemGroup>
 
