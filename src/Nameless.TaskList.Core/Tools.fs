@@ -39,7 +39,7 @@ module Tools =
 
     let getTopics (vault: IVault) : Tool =
         define "get_topics"
-            "List currently active topics with their titles and current-understanding summaries."
+            "List the slugs and titles of active and resolved topics (excludes archived). Use get_topic to read a topic's full body."
             (noParams ())
             (fun _ ->
                 vault.ListFiles "topics/active"
