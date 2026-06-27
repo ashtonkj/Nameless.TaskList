@@ -55,3 +55,27 @@ module Scheduler =
                 if candidate.DayOfWeek = d && candidate <= now then candidate
                 else back (candidate.AddDays(-1.0))
             back (DateTime(now.Year, now.Month, now.Day, h, m, 0))
+
+    let private lastRunOf (state: SchedulerState) (name: string) : DateTime =
+        match state.LastRuns.TryGetValue name with
+        | true, v -> v
+        | _ -> DateTime.MinValue
+
+    /// Tasks whose most-recent scheduled slot is newer than their recorded last run.
+    let dueTasks (now: DateTime) (tasks: ScheduledTask list) (state: SchedulerState) : ScheduledTask list =
+        tasks |> List.filter (fun t ->
+            let recent = mostRecentOccurrence now t.Spec
+            let isInCurrentCycle = recent.Date = now.Date
+            lastRunOf state t.Name < recent && isInCurrentCycle
+        )
+
+    /// Run each due task via `run`, returning a NEW state with those tasks' last-run set to `now`.
+    /// Does not mutate the input. `run` is expected to swallow its own failures (the host service
+    /// wraps each task) so one failure never aborts the others; last-run advances regardless, so a
+    /// failed run simply waits for its next slot rather than retrying every tick.
+    let tick (now: DateTime) (tasks: ScheduledTask list) (state: SchedulerState) (run: ScheduledTask -> unit) : SchedulerState =
+        let due = dueTasks now tasks state
+        for t in due do run t
+        let updated = System.Collections.Generic.Dictionary(state.LastRuns)
+        for t in due do updated.[t.Name] <- now
+        { LastRuns = updated }
