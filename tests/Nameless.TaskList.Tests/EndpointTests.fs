@@ -47,6 +47,10 @@ let ``Skipped maps to 200`` () =
     Assert.Equal(200, statusOf Skipped)
 
 [<Fact>]
+let ``Logged maps to 200`` () =
+    Assert.Equal(200, statusOf Logged)
+
+[<Fact>]
 let ``LlmError maps to 502`` () =
     Assert.Equal(502, statusOf (LlmError "bad json"))
 

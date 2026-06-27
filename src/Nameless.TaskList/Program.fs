@@ -90,7 +90,10 @@ module Program =
 
         app.MapPost("/reindex", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
             fun (vault: IVault) ->
-                try Indexer.regenerate vault |> ReindexHandler.toHttp
+                let topicCfg : Indexer.TopicSweepConfig =
+                    { ResolvedArchiveAfterDays = (match System.Int32.TryParse(cfg.["Topics:ResolvedArchiveAfterDays"]) with | true, n -> n | _ -> 14)
+                      DormantArchiveAfterDays = (match System.Int32.TryParse(cfg.["Topics:DormantArchiveAfterDays"]) with | true, n -> n | _ -> 90) }
+                try Indexer.regenerate vault topicCfg System.DateTime.Now |> ReindexHandler.toHttp
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         app.MapGet("/relationships", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(

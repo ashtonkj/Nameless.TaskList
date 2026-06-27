@@ -10,6 +10,21 @@ module Indexer =
         { Tasks: int; Topics: int; Events: int; Commitments: int
           Notes: int; People: int; Channels: int; Relationships: int; Skipped: int }
 
+    type TopicSweepConfig = { ResolvedArchiveAfterDays: int; DormantArchiveAfterDays: int }
+
+    /// Decide a topic's next status from its current status, last-updated time, and now.
+    /// Pure. `Some s` when it should change; `None` when unchanged or the date can't be read.
+    let nextTopicStatus (cfg: TopicSweepConfig) (now: System.DateTime) (status: string) (lastUpdated: string) : string option =
+        let s = (if isNull status then "active" else status).Trim().ToLowerInvariant()
+        match System.DateTimeOffset.TryParse lastUpdated with
+        | true, ts ->
+            let idleDays = (now - ts.LocalDateTime).TotalDays
+            match s with
+            | "active"   when idleDays >= float cfg.DormantArchiveAfterDays  -> Some "archived"
+            | "resolved" when idleDays >= float cfg.ResolvedArchiveAfterDays -> Some "archived"
+            | _ -> None
+        | _ -> None
+
     // NOTE: must NOT be `private`. YamlDotNet (like System.Text.Json) only serializes
     // public types' members, so a private record serializes to `{}` — index files would
     // get an empty frontmatter instead of `type: Index` / title / last_updated.
@@ -176,7 +191,43 @@ module Indexer =
         writeIndex vault "relationships" "Relationship Index" (sb.ToString().TrimEnd())
         List.length live, skipped
 
-    let regenerate (vault: IVault) : IndexSummary =
+    /// Apply the dormancy rule to every topic, persist status changes (same path, body kept),
+    /// and prune any newly-archived topic from every channel's active_topics. Returns #changed.
+    let sweepTopics (vault: IVault) (cfg: TopicSweepConfig) (now: System.DateTime) : int =
+        let newlyArchived = System.Collections.Generic.HashSet<string>()
+        let mutable changed = 0
+        for path in vault.ListFilesRecursive "topics" do
+            if not (path.EndsWith "index.md") then
+                try
+                    let mf = MarkdownFile.FromString (vault.Read path)
+                    match mf.FrontMatter with
+                    | Some fm ->
+                        let t = Frontmatter.deserialize<Topic> fm
+                        match nextTopicStatus cfg now t.Status t.LastUpdated with
+                        | Some s ->
+                            if s = "archived" then newlyArchived.Add path |> ignore
+                            vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize { t with Status = s }) mf.Content)
+                            changed <- changed + 1
+                        | None -> ()
+                    | None -> ()
+                with _ -> ()
+        if newlyArchived.Count > 0 then
+            for path in vault.ListFilesRecursive "channels" do
+                if not (path.EndsWith "index.md") then
+                    try
+                        let mf = MarkdownFile.FromString (vault.Read path)
+                        match mf.FrontMatter with
+                        | Some fm ->
+                            let c = Frontmatter.deserialize<Channel> fm
+                            let kept = (if isNull c.ActiveTopics then [||] else c.ActiveTopics) |> Array.filter (fun tp -> not (newlyArchived.Contains tp))
+                            if kept.Length <> (if isNull c.ActiveTopics then 0 else c.ActiveTopics.Length) then
+                                vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize { c with ActiveTopics = kept }) mf.Content)
+                        | None -> ()
+                    with _ -> ()
+        changed
+
+    let regenerate (vault: IVault) (cfg: TopicSweepConfig) (now: System.DateTime) : IndexSummary =
+        sweepTopics vault cfg now |> ignore
         let tCount, tSkip = renderTasks vault
         let topCount, topSkip = renderTopics vault
         let evCount, evSkip = renderEvents vault

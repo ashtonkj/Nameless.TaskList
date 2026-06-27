@@ -55,6 +55,7 @@ module BulkProcessor =
                 match processOne m.Id m.ChatJid with
                 | Processed _ -> j <- { j with Processed = j.Processed + 1 }
                 | ProcessedNoise -> j <- { j with Noise = j.Noise + 1 }
+                | Logged -> j <- { j with Processed = j.Processed + 1 }
                 | Skipped -> j <- { j with Skipped = j.Skipped + 1 }
                 | LlmError _ -> j <- { j with Errors = j.Errors + 1 }
                 | NotFound ->

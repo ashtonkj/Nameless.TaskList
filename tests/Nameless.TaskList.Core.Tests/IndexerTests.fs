@@ -1,9 +1,14 @@
 module Nameless.TaskList.Core.Tests.IndexerTests
 
+open System
 open Nameless.TaskList.Core
 open Nameless.TaskList.Core.Ports
 open Nameless.TaskList.Core.Tests.Fakes
 open Xunit
+
+let private cfg : Indexer.TopicSweepConfig = { ResolvedArchiveAfterDays = 14; DormantArchiveAfterDays = 90 }
+let private now = DateTime(2026, 6, 27, 12, 0, 0)
+let private daysAgo (d: int) = now.AddDays(float -d).ToString("yyyy-MM-ddTHH:mm:sszzz")
 
 let private seedCore () =
     let v = FakeVault()
@@ -17,7 +22,7 @@ let private seedCore () =
 [<Fact>]
 let ``regenerate writes a tasks index ordering high priority before low`` () =
     let v = seedCore ()
-    Indexer.regenerate (v :> IVault) |> ignore
+    Indexer.regenerate (v :> IVault) cfg now |> ignore
     let idx = v.Files.["tasks/index.md"]
     // Frontmatter must serialize (regression: a private IndexMeta produced an empty `{}`).
     Assert.Contains("type: Index", idx)
@@ -29,14 +34,14 @@ let ``regenerate writes a tasks index ordering high priority before low`` () =
 [<Fact>]
 let ``regenerate writes topic and channel indexes`` () =
     let v = seedCore ()
-    Indexer.regenerate (v :> IVault) |> ignore
+    Indexer.regenerate (v :> IVault) cfg now |> ignore
     Assert.Contains("[[topics/active/t1]]", v.Files.["topics/index.md"])
     Assert.Contains("[[channels/whatsapp/wife]]", v.Files.["channels/index.md"])
 
 [<Fact>]
 let ``regenerate counts items and skips malformed files`` () =
     let v = seedCore ()
-    let s = Indexer.regenerate (v :> IVault)
+    let s = Indexer.regenerate (v :> IVault) cfg now
     Assert.Equal(2, s.Tasks)        // high + low; bad.md skipped
     Assert.Equal(1, s.Topics)
     Assert.Equal(1, s.Channels)
@@ -54,7 +59,7 @@ let private seedRest () =
 [<Fact>]
 let ``regenerate writes events index in chronological order`` () =
     let v = seedRest ()
-    Indexer.regenerate (v :> IVault) |> ignore
+    Indexer.regenerate (v :> IVault) cfg now |> ignore
     let idx = v.Files.["events/index.md"]
     Assert.True(idx.IndexOf("events/2026/06/early") < idx.IndexOf("events/2026/07/late"))
 
@@ -63,21 +68,21 @@ let ``regenerate puts undated events last in events index`` () =
     let v = FakeVault()
     v.Seed("events/2026/06/dated.md", "---\ntype: Event\ntitle: Dated\nwhen: 2026-06-01T09:00:00+02:00\ncontext:\n  - family\n---\nb")
     v.Seed("events/2026/06/undated.md", "---\ntype: Event\ntitle: Undated\nwhen: ''\ncontext:\n  - family\n---\nb")
-    Indexer.regenerate (v :> IVault) |> ignore
+    Indexer.regenerate (v :> IVault) cfg now |> ignore
     let idx = v.Files.["events/index.md"]
     Assert.True(idx.IndexOf("events/2026/06/dated") < idx.IndexOf("events/2026/06/undated"))
 
 [<Fact>]
 let ``regenerate flags commitments with no assigned task`` () =
     let v = seedRest ()
-    Indexer.regenerate (v :> IVault) |> ignore
+    Indexer.regenerate (v :> IVault) cfg now |> ignore
     Assert.Contains("[[commitments/fees]]", v.Files.["commitments/index.md"])
     Assert.Contains("⚑", v.Files.["commitments/index.md"])
 
 [<Fact>]
 let ``regenerate writes notes and people indexes and full counts`` () =
     let v = seedRest ()
-    let s = Indexer.regenerate (v :> IVault)
+    let s = Indexer.regenerate (v :> IVault) cfg now
     Assert.Contains("[[notes/allergy]]", v.Files.["notes/index.md"])
     Assert.Contains("[[people/medical/dr-naidoo]]", v.Files.["people/index.md"])
     Assert.Equal(2, s.Events)
@@ -96,10 +101,56 @@ let ``regenerate writes a relationship index and drops dangling edges`` () =
     // dangling edge: 'ghost' person file does not exist
     v.Seed("relationships/ethan-ghost.md",
            "---\ntype: Relationship\ntitle: Ethan ↔ Ghost\nfrom: people/family/ethan.md\nto: people/family/ghost.md\nrelation: friend\ndescriptor: ''\nconfidence: high\npeople:\n  - ethan\n  - ghost\nsource: messages/y.md\n---\nbody")
-    let s = Indexer.regenerate (v :> IVault)
+    let s = Indexer.regenerate (v :> IVault) cfg now
     Assert.Equal(1, s.Relationships)   // dangling edge dropped from count
     let idx = v.Files.["relationships/index.md"]
     Assert.Contains("type: Index", idx)
     Assert.Contains("title: Relationship Index", idx)
     Assert.Contains("[[relationships/dr-naidoo-ethan]]", idx)
     Assert.DoesNotContain("[[relationships/ethan-ghost]]", idx)
+
+[<Fact>]
+let ``active topic idle past the dormant threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "active" (daysAgo 100))
+
+[<Fact>]
+let ``active topic within the dormant threshold is unchanged`` () =
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "active" (daysAgo 30))
+
+[<Fact>]
+let ``resolved topic idle past the resolved threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "resolved" (daysAgo 20))
+
+[<Fact>]
+let ``resolved topic within the resolved threshold is unchanged`` () =
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "resolved" (daysAgo 5))
+
+[<Fact>]
+let ``already-archived and unparseable dates are left unchanged`` () =
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "archived" (daysAgo 999))
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "active" "not-a-date")
+
+[<Fact>]
+let ``active topic exactly at the dormant threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "active" (daysAgo 90))
+
+[<Fact>]
+let ``resolved topic exactly at the resolved threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "resolved" (daysAgo 14))
+
+[<Fact>]
+let ``sweepTopics archives a stale active topic and prunes it from its channel`` () =
+    let vault = FakeVault()
+    vault.Seed("topics/active/old-thread.md",
+               sprintf "---\ntype: Topic\ntitle: Old thread\ndescription: d\nstatus: active\ncontext:\n  - family\nchannel: wife\nfirst_seen: %s\nlast_updated: %s\n---\nbody\n" (daysAgo 200) (daysAgo 200))
+    vault.Seed("topics/active/fresh.md",
+               sprintf "---\ntype: Topic\ntitle: Fresh\ndescription: d\nstatus: active\ncontext:\n  - family\nchannel: wife\nfirst_seen: %s\nlast_updated: %s\n---\nbody\n" (daysAgo 1) (daysAgo 1))
+    vault.Seed("channels/whatsapp/wife.md",
+               "---\ntype: Channel\ntitle: Wife\nplatform: whatsapp-direct\ncontext: ''\npeople: []\nsignal_weight: medium\nmessage_count: 2\nlast_processed: 2026-06-20T00:00:00\nactive_topics:\n  - topics/active/old-thread.md\n  - topics/active/fresh.md\n---\n")
+    let changed = Indexer.sweepTopics vault cfg now
+    Assert.Equal(1, changed)
+    Assert.Contains("status: archived", vault.Files.["topics/active/old-thread.md"])
+    Assert.Contains("status: active", vault.Files.["topics/active/fresh.md"])
+    let channel = vault.Files.["channels/whatsapp/wife.md"]
+    Assert.DoesNotContain("topics/active/old-thread.md", channel)
+    Assert.Contains("topics/active/fresh.md", channel)

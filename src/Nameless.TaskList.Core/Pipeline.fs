@@ -26,6 +26,7 @@ module Pipeline =
         | NotFound
         | Skipped
         | ProcessedNoise
+        | Logged
         | Processed of topic: string * tasks: string list
         | LlmError of string
 
@@ -370,18 +371,8 @@ module Pipeline =
                 LlmError e
             | Ok classification ->
 
-            // Broadcast feeds (newsletters/status) never carry the owner's personal to-dos:
-            // their imperatives ("avoid the area", "log a call") address the whole audience.
-            // Suppress task/event/commitment extraction for them; the topic (to track the
-            // thread) and any durable notes still get written.
-            let classification =
-                let c =
-                    if isBroadcastChannel chatJid then
-                        { classification with
-                            Entities = { classification.Entities with Tasks = [||]; Events = [||]; Commitments = [||] } }
-                    else classification
-                // Drop terms of endearment the model mistakes for named people.
-                { c with PeopleMentioned = stripEndearments c.PeopleMentioned }
+            // Drop terms of endearment the model mistakes for named people.
+            let classification = { classification with PeopleMentioned = stripEndearments classification.PeopleMentioned }
 
             if classification.Noise then
                 // Minimal message record, then stop.
@@ -393,6 +384,18 @@ module Pipeline =
                 deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) noiseBody)
                 updateChannel deps msg channelSlug None
                 ProcessedNoise
+            else
+
+            if isBroadcastChannel chatJid then
+                // Broadcast feeds are one-to-many: log the message, but never thread it into a
+                // topic or extract entities from it.
+                let record : Message =
+                    { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
+                      Sender = msg.SenderName; Noise = false; Topic = ""
+                      SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
+                deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) (mediaHeader + msg.Content))
+                updateChannel deps msg channelSlug None
+                Logged
             else
 
             // People references use the canonical slug form (matching person filenames), not a
@@ -417,22 +420,28 @@ module Pipeline =
                 deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
                 slug, Naming.topicPath slug
 
-            // Active topics: (slug, title, understanding)
+            // Active topics: (slug, title, understanding) — archived topics are excluded.
+            // topicFiles tracks whether any topic files exist at all (for the shortlist fallback decision).
+            let topicFiles = deps.Vault.ListFiles "topics/active"
             let activeTopics =
-                deps.Vault.ListFiles "topics/active"
+                topicFiles
                 |> List.choose (fun path ->
                     try
                         let mf = MarkdownFile.FromString (deps.Vault.Read path)
                         match mf.FrontMatter with
                         | Some fm ->
                             let t = Frontmatter.deserialize<Topic> fm
-                            Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, understandingOf mf.Content)
+                            if (if isNull t.Status then "active" else t.Status).Trim().ToLowerInvariant() = "archived" then None
+                            else Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, understandingOf mf.Content)
                         | None -> None
                     with _ -> None)
 
             // Embedding shortlist: Some candidates (possibly empty) when embedding works; None to fall back.
+            // Use None (tool-enabled fallback) only when there are no topic files at all.
+            // When files exist but all are archived, treat as empty candidate set (fast new-topic path).
             let shortlist =
-                if List.isEmpty activeTopics then None
+                if List.isEmpty topicFiles then None
+                elif List.isEmpty activeTopics then Some []
                 else
                     try
                         let intentVec = deps.Embedder.Embed classification.Intent
@@ -446,11 +455,11 @@ module Pipeline =
                         |> Some
                     with _ -> None
 
-            let topicOutcome : Result<string * string, string> =
+            let topicOutcome : Result<string * string * bool, string> =
                 match shortlist with
                 | Some [] ->
                     // clearly new — skip the LLM topic-match call
-                    Ok (createNewTopic (titleFromIntent classification.Intent))
+                    let (s, p) = createNewTopic (titleFromIntent classification.Intent) in Ok (s, p, true)
                 | Some candidates ->
                     let candidateText =
                         candidates
@@ -463,10 +472,10 @@ module Pipeline =
                         let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
                         let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
                         match m.Match, matched with
-                        | true, Some (slug, _, _, _) -> Ok (slug, Naming.topicPath slug)
+                        | true, Some (slug, _, _, _) -> Ok (slug, Naming.topicPath slug, false)
                         | _ ->
                             let title = if System.String.IsNullOrWhiteSpace m.NewTopicTitle then titleFromIntent classification.Intent else m.NewTopicTitle
-                            Ok (createNewTopic title)
+                            let (s, p) = createNewTopic title in Ok (s, p, true)
                 | None ->
                     // fallback: today's tool-enabled match over all active topics
                     let topicTools = [ Tools.getTopics deps.Vault; Tools.getTopic deps.Vault ]
@@ -474,14 +483,14 @@ module Pipeline =
                     match Prompts.parseTopicMatch reply with
                     | Error e -> Error e
                     | Ok m ->
-                        if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug)
-                        else Ok (createNewTopic m.NewTopicTitle)
+                        if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug, false)
+                        else let (s, p) = createNewTopic m.NewTopicTitle in Ok (s, p, true)
 
             match topicOutcome with
             | Error e ->
                 eprintfn "[topic-match-error] msg=%s chat=%s: %s" id chatJid e
                 LlmError e
-            | Ok (_, topicPath) ->
+            | Ok (_, topicPath, isNewTopic) ->
 
             // --- Step: create task files via the shared entity writer ---
             let taskSpec : EntitySpec<Task> =
@@ -886,16 +895,20 @@ module Pipeline =
                 // flows in directly; history remains available to the classify step, where it
                 // disambiguates meaning without polluting stored prose.
                 let user = Prompts.topicUpdateUser "" existing.Content msg.Content classification.Intent
-                let newBody = Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user
+                let resolved, newBody = Prompts.parseTopicUpdate (Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user)
                 match existing.FrontMatter with
                 | Some fm ->
                     let t = Frontmatter.deserialize<Topic> fm
+                    // New topics are always active; a matched topic is resolved only when the
+                    // model said so this turn, otherwise active (re-activating a resolved one).
+                    let newStatus = if isNewTopic then "active" elif resolved then "resolved" else "active"
                     let merged =
                         { t with
+                            Status = newStatus
                             LastUpdated = laterIso t.LastUpdated msg.Timestamp
-                            MessageRefs = Array.append t.MessageRefs [| messagePath |]
-                            SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths)
-                            SpawnedEvents = Array.append t.SpawnedEvents (Array.ofList eventPaths) }
+                            MessageRefs = Array.append (if isNull t.MessageRefs then [||] else t.MessageRefs) [| messagePath |]
+                            SpawnedTasks = Array.append (if isNull t.SpawnedTasks then [||] else t.SpawnedTasks) (Array.ofList taskPaths)
+                            SpawnedEvents = Array.append (if isNull t.SpawnedEvents then [||] else t.SpawnedEvents) (Array.ofList eventPaths) }
                     // Resolve every person on the topic (title + path) once, then use that
                     // list both to wikilink their names inline throughout the body and to
                     // append a deterministic "## Linked people" section. Linking against the
