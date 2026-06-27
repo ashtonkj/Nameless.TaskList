@@ -89,6 +89,12 @@ let ``OllamaChatClient includes options.num_ctx only when numCtx is set`` () =
 
     let noCtx = capture 11696 (fun http -> OllamaChatClient(http, "http://localhost:11696", "granite") :> Ports.IChatClient)
     Assert.DoesNotContain("num_ctx", noCtx)
+    Assert.DoesNotContain("temperature", noCtx)              // -1.0 sentinel → not sent
+
+    // num_ctx + temperature both pinned (5-arg form).
+    let withTemp = capture 11697 (fun http -> OllamaChatClient(http, "http://localhost:11697", "granite", 8192, 0.2) :> Ports.IChatClient)
+    Assert.Contains("\"num_ctx\":8192", withTemp.Replace(" ", ""))
+    Assert.Contains("\"temperature\":0.2", withTemp.Replace(" ", ""))
 
 [<Fact>]
 let ``OllamaEmbedder posts model+input to /api/embed and parses embeddings[0]`` () =

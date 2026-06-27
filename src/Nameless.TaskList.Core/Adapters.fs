@@ -65,17 +65,24 @@ module Adapters =
           tools: obj array
           stream: bool }
 
-    type OllamaChatClient(httpClient: HttpClient, url: string, model: string, numCtx: int) =
-        // Back-compat 3-arg form: no explicit context cap (numCtx = 0 → server default).
-        new(httpClient: HttpClient, url: string, model: string) = OllamaChatClient(httpClient, url, model, 0)
+    type OllamaChatClient(httpClient: HttpClient, url: string, model: string, numCtx: int, temperature: float) =
+        // Back-compat constructors: no context cap (numCtx 0 → server default) and no
+        // explicit temperature (-1.0 → model default).
+        new(httpClient: HttpClient, url: string, model: string) = OllamaChatClient(httpClient, url, model, 0, -1.0)
+        new(httpClient: HttpClient, url: string, model: string, numCtx: int) = OllamaChatClient(httpClient, url, model, numCtx, -1.0)
         interface IChatClient with
             member _.Chat(messages, tools) =
-                // When numCtx > 0 we pin Ollama's context window. Some models default to a
-                // huge window (e.g. granite4.1 → 128K), which allocates a multi-GB KV cache
-                // that spills to CPU/swap and never loads. An explicit num_ctx avoids that.
+                // Ollama `options`, included only when something is set:
+                //  - num_ctx pins the context window; some models default huge (granite4.1 →
+                //    128K), allocating a multi-GB KV cache that spills to swap and never loads.
+                //  - temperature near 0 makes classification/extraction deterministic; the chat
+                //    default (~0.8) makes the same message yield different entities run to run.
+                let options = System.Collections.Generic.Dictionary<string, obj>()
+                if numCtx > 0 then options.["num_ctx"] <- box numCtx
+                if temperature >= 0.0 then options.["temperature"] <- box temperature
                 let body : obj =
-                    if numCtx > 0
-                    then box {| model = model; messages = messages; tools = tools; stream = false; options = {| num_ctx = numCtx |} |}
+                    if options.Count > 0
+                    then box {| model = model; messages = messages; tools = tools; stream = false; options = options |}
                     else box { model = model; messages = messages; tools = tools; stream = false }
                 let mediaType = MediaTypeHeaderValue.Parse("application/json")
                 let content = JsonContent.Create(body, mediaType, JsonSerializerOptions(JsonSerializerDefaults.Web))
