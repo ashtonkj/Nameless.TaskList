@@ -311,34 +311,38 @@ module Adapters =
         interface IMailbox with
             member _.UidValidity(folder) =
                 use client = connect ()
-                let fld = client.GetFolder(folder)
-                fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
-                let v = fld.UidValidity
-                client.Disconnect(true, CancellationToken.None)
-                v
+                try
+                    let fld = client.GetFolder(folder)
+                    fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
+                    let v = fld.UidValidity
+                    v
+                finally
+                    client.Disconnect(true, CancellationToken.None)
             member _.FetchSince(folder, sinceUid) =
                 use client = connect ()
-                let fld = client.GetFolder(folder)
-                fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
-                // UID range strictly greater than the cursor: [sinceUid+1 .. *].
-                let range =
-                    UniqueIdRange(UniqueId(fld.UidValidity, sinceUid + 1u), UniqueId.MaxValue)
-                let uids = fld.Search(SearchQuery.Uids(range), CancellationToken.None)
-                let results =
-                    [ for uid in uids do
-                        let msg = fld.GetMessage(uid, CancellationToken.None, null)
-                        let fromAddr =
-                            msg.From.Mailboxes |> Seq.tryHead
-                        yield
-                            { MessageId = (if isNull msg.MessageId then "" else msg.MessageId)
-                              FromAddress = (match fromAddr with Some m -> m.Address | None -> "")
-                              FromDisplay = (match fromAddr with Some m -> (if String.IsNullOrWhiteSpace m.Name then m.Address else m.Name) | None -> "")
-                              Date = msg.Date
-                              Subject = (if isNull msg.Subject then "" else msg.Subject)
-                              TextBody = (if isNull msg.TextBody then "" else msg.TextBody)
-                              HtmlBody = (if isNull msg.HtmlBody then "" else msg.HtmlBody)
-                              ListUnsubscribe = msg.Headers.Contains("List-Unsubscribe")
-                              Precedence = (let h = msg.Headers.["Precedence"] in if isNull h then "" else h)
-                              Uid = uid.Id } ]
-                client.Disconnect(true, CancellationToken.None)
-                results
+                try
+                    let fld = client.GetFolder(folder)
+                    fld.Open(FolderAccess.ReadOnly, CancellationToken.None) |> ignore
+                    // UID range strictly greater than the cursor: [sinceUid+1 .. *].
+                    let range =
+                        UniqueIdRange(UniqueId(fld.UidValidity, sinceUid + 1u), UniqueId.MaxValue)
+                    let uids = fld.Search(SearchQuery.Uids(range), CancellationToken.None)
+                    let results =
+                        [ for uid in uids do
+                            let msg = fld.GetMessage(uid, CancellationToken.None, null)
+                            let fromAddr =
+                                msg.From.Mailboxes |> Seq.tryHead
+                            yield
+                                { MessageId = (if isNull msg.MessageId then "" else msg.MessageId)
+                                  FromAddress = (match fromAddr with Some m -> m.Address | None -> "")
+                                  FromDisplay = (match fromAddr with Some m -> (if String.IsNullOrWhiteSpace m.Name then m.Address else m.Name) | None -> "")
+                                  Date = msg.Date
+                                  Subject = (if isNull msg.Subject then "" else msg.Subject)
+                                  TextBody = (if isNull msg.TextBody then "" else msg.TextBody)
+                                  HtmlBody = (if isNull msg.HtmlBody then "" else msg.HtmlBody)
+                                  ListUnsubscribe = msg.Headers.Contains("List-Unsubscribe")
+                                  Precedence = (let h = msg.Headers.["Precedence"] in if isNull h then "" else h)
+                                  Uid = uid.Id } ]
+                    results
+                finally
+                    client.Disconnect(true, CancellationToken.None)
