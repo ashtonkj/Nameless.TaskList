@@ -27,7 +27,9 @@ type WhatsAppListenerService
                             WhatsAppListener.runSession listener cursorStore messages processOne
                                 channel (fun m -> logger.LogWarning("{Msg}", m)) stoppingToken),
                             stoppingToken)
-                with ex ->
+                with
+                | :? OperationCanceledException -> ()
+                | ex ->
                     logger.LogWarning(ex, "WhatsApp listener session ended; reconnecting")
                 if not stoppingToken.IsCancellationRequested then
                     try do! Task.Delay(TimeSpan.FromSeconds(float reconnectSeconds), stoppingToken)
