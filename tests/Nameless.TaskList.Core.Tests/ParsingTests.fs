@@ -27,6 +27,20 @@ let ``parseClassification extracts tasks and tolerates code fences`` () =
     | Error e -> failwith e
 
 [<Fact>]
+let ``parseClassification de-duplicates repeated entities the model emits`` () =
+    // granite at times repeats the same task verbatim (and with case/space wobble) several
+    // times in one reply; the parse boundary must collapse these so they don't spawn
+    // duplicate entity refs in the topic and response.
+    let json =
+        """{"noise":false,"noise_reason":null,"contexts":["family"],""" +
+        """"intent":"avoid area","action_required":true,"urgency":"high","people_mentioned":[],""" +
+        """"entities":{"tasks":["Avoid Nicolway mall area","avoid nicolway mall area "," Avoid Nicolway Mall Area"],""" +
+        """"events":[],"commitments":[],"notes":[]}}"""
+    match Prompts.parseClassification json with
+    | Ok c -> Assert.Equal<string array>([| "Avoid Nicolway mall area" |], c.Entities.Tasks)
+    | Error e -> failwith e
+
+[<Fact>]
 let ``parseClassification returns Error on garbage`` () =
     match Prompts.parseClassification "I cannot help with that" with
     | Ok _ -> failwith "expected Error"

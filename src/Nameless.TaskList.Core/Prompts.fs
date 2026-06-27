@@ -387,6 +387,15 @@ Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
 
     let private nzArr (a: string array) = if obj.ReferenceEquals(a, null) then Array.empty else a
 
+    /// Coalesce null, drop blanks, and remove exact/whitespace/case-duplicate entries the
+    /// model sometimes emits — granite occasionally repeats the same task verbatim several
+    /// times in one reply, which otherwise spawns duplicate entity refs. Keeps the first
+    /// surface form; genuinely distinct-but-similar items are left to the match-and-merge stage.
+    let private nzDistinct (a: string array) =
+        nzArr a
+        |> Array.filter (fun s -> not (System.String.IsNullOrWhiteSpace s))
+        |> Array.distinctBy (fun s -> s.Trim().ToLowerInvariant())
+
     /// The model sometimes omits keys entirely; omitted keys leave CLIMutable array fields
     /// (and the whole Entities object) null, which the pipeline then dereferences with
     /// Array.toList. Coalesce every array and Entities to non-null at the parse boundary.
@@ -400,10 +409,10 @@ Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
             PeopleMentioned = nzArr c.PeopleMentioned
             Entities =
                 { e with
-                    Tasks = nzArr e.Tasks
-                    Events = nzArr e.Events
-                    Commitments = nzArr e.Commitments
-                    Notes = nzArr e.Notes } }
+                    Tasks = nzDistinct e.Tasks
+                    Events = nzDistinct e.Events
+                    Commitments = nzDistinct e.Commitments
+                    Notes = nzDistinct e.Notes } }
 
     let parseClassification (raw: string) : Result<Classification, string> =
         tryParse<Classification> raw |> Result.map normalizeClassification

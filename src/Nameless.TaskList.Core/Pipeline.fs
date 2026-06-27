@@ -534,7 +534,10 @@ module Pipeline =
                     with _ -> createNewTask intent
                 | None -> createNewTask intent
 
-            let taskPaths = classification.Entities.Tasks |> Array.toList |> List.map processTask
+            // distinct: near-duplicate intents (punctuation/wording wobble) can slugify to the
+            // same file, and match-and-merge can fold two intents onto one existing task — either
+            // way the same path must appear once in spawned_tasks and the response.
+            let taskPaths = classification.Entities.Tasks |> Array.toList |> List.map processTask |> List.distinct
 
             // --- Step: create event files (date-pathed; undated events fall back to the message date) ---
             let parseWhen (s: string) (fallback: System.DateTime) =
@@ -573,7 +576,7 @@ module Pipeline =
                   BasePath = (fun e -> Naming.eventPath (parseWhen e.When msg.Timestamp) e.Title)
                   TitleOf = (fun e -> e.Title) }
 
-            let eventPaths = writeEntities deps eventSpec (List.ofArray classification.Entities.Events)
+            let eventPaths = writeEntities deps eventSpec (List.ofArray classification.Entities.Events) |> List.distinct
 
             // --- Step: create commitment files ---
             let commitmentSpec : EntitySpec<Commitment> =
@@ -604,7 +607,7 @@ module Pipeline =
                   BasePath = (fun c -> Naming.commitmentPath c.Title)
                   TitleOf = (fun c -> c.Title) }
 
-            let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments)
+            let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments) |> List.distinct
 
             // --- Step: notes (durable reference only) — match an existing note and merge, else create ---
             let interpretNote (stripped: string) (intent: string) : Note * string =
@@ -675,7 +678,7 @@ module Pipeline =
                     with _ -> createNewNote intent
                 | None -> createNewNote intent
 
-            let notePaths = classification.Entities.Notes |> Array.toList |> List.map processNote
+            let notePaths = classification.Entities.Notes |> Array.toList |> List.map processNote |> List.distinct
 
             // --- Step: resolve mentioned people (alias-aware) and create stubs only when genuinely new ---
             let messageCtx =
