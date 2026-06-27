@@ -174,3 +174,21 @@ type ChatMessage =
         AlbumIndex: int option
         Timestamp: DateTime
     }
+
+/// A raw email fetched from IMAP, before mapping to a ChatMessage. Public (not private)
+/// because EmailCursor below is serialized and these travel together.
+type RawEmail =
+    { MessageId: string
+      FromAddress: string
+      FromDisplay: string
+      Date: System.DateTimeOffset
+      Subject: string
+      TextBody: string
+      HtmlBody: string
+      ListUnsubscribe: bool
+      Precedence: string
+      Uid: uint32 }
+
+/// Per-account IMAP poll cursor. Serialized to JSON — keep public (a private record
+/// serializes to {}).
+type EmailCursor = { UidValidity: uint32; LastUid: uint32 }

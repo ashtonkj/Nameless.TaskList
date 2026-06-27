@@ -25,6 +25,7 @@
         <Compile Include="SimilarityTests.fs" />
         <Compile Include="BulkProcessorTests.fs" />
         <Compile Include="JobStoreTests.fs" />
+        <Compile Include="EmailTests.fs" />
     </ItemGroup>
 
     <ItemGroup>

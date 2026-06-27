@@ -16,6 +16,7 @@
         <Compile Include="Relationships.fs" />
         <Compile Include="Similarity.fs" />
         <Compile Include="Pipeline.fs" />
+        <Compile Include="Email.fs" />
         <Compile Include="BulkProcessor.fs" />
         <Compile Include="Indexer.fs" />
         <Compile Include="Adapters.fs" />
