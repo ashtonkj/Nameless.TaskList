@@ -129,3 +129,11 @@ let ``resolved topic within the resolved threshold is unchanged`` () =
 let ``already-archived and unparseable dates are left unchanged`` () =
     Assert.Equal(None, Indexer.nextTopicStatus cfg now "archived" (daysAgo 999))
     Assert.Equal(None, Indexer.nextTopicStatus cfg now "active" "not-a-date")
+
+[<Fact>]
+let ``active topic exactly at the dormant threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "active" (daysAgo 90))
+
+[<Fact>]
+let ``resolved topic exactly at the resolved threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "resolved" (daysAgo 14))
