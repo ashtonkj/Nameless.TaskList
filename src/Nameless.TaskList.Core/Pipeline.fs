@@ -26,6 +26,7 @@ module Pipeline =
         | NotFound
         | Skipped
         | ProcessedNoise
+        | Logged
         | Processed of topic: string * tasks: string list
         | LlmError of string
 
@@ -370,18 +371,8 @@ module Pipeline =
                 LlmError e
             | Ok classification ->
 
-            // Broadcast feeds (newsletters/status) never carry the owner's personal to-dos:
-            // their imperatives ("avoid the area", "log a call") address the whole audience.
-            // Suppress task/event/commitment extraction for them; the topic (to track the
-            // thread) and any durable notes still get written.
-            let classification =
-                let c =
-                    if isBroadcastChannel chatJid then
-                        { classification with
-                            Entities = { classification.Entities with Tasks = [||]; Events = [||]; Commitments = [||] } }
-                    else classification
-                // Drop terms of endearment the model mistakes for named people.
-                { c with PeopleMentioned = stripEndearments c.PeopleMentioned }
+            // Drop terms of endearment the model mistakes for named people.
+            let classification = { classification with PeopleMentioned = stripEndearments classification.PeopleMentioned }
 
             if classification.Noise then
                 // Minimal message record, then stop.
@@ -393,6 +384,18 @@ module Pipeline =
                 deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) noiseBody)
                 updateChannel deps msg channelSlug None
                 ProcessedNoise
+            else
+
+            if isBroadcastChannel chatJid then
+                // Broadcast feeds are one-to-many: log the message, but never thread it into a
+                // topic or extract entities from it.
+                let record : Message =
+                    { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
+                      Sender = msg.SenderName; Noise = false; Topic = ""
+                      SpawnedTasks = [||]; SpawnedEvents = [||]; SpawnedNotes = [||]; ProcessedBy = deps.Model }
+                deps.Vault.Write(messagePath, MarkdownFile.ToString (Frontmatter.serialize record) (mediaHeader + msg.Content))
+                updateChannel deps msg channelSlug None
+                Logged
             else
 
             // People references use the canonical slug form (matching person filenames), not a

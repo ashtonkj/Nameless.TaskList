@@ -675,16 +675,18 @@ let ``broadcast channel suppresses task event and commitment extraction`` () =
     let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"power outage notice","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":["Avoid the area"],"events":["Outage at 9am"],"commitments":["restore supply"],"notes":[]}}"""
     let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Power outage"}"""
     let topicBody = Responses.final "## Current understanding\n\n## Open questions\n\n## Resolved\n"
-    let chat = FakeChatClient([ classify; topicMatch; topicBody ])
+    let chat = FakeChatClient([ classify ])
     let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
     match Pipeline.processMessage d "M1" "120363241214508891@newsletter" with
-    | Processed(_, tasks) ->
-        Assert.Empty(tasks)
+    | Logged ->
         let has prefix = vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith(prefix: string))
         Assert.False(has "tasks/")
         Assert.False(has "events/")
         Assert.False(has "commitments/")
-    | other -> failwithf "expected Processed, got %A" other
+        Assert.False(has "topics/")
+        let msg = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith "messages/")
+        Assert.Contains("noise: false", vault.Files.[msg])
+    | other -> failwithf "expected Logged, got %A" other
 
 [<Fact>]
 let ``a created task body wikilinks a resolved person it names`` () =

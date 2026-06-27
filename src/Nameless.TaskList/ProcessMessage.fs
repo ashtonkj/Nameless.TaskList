@@ -12,6 +12,7 @@ module ProcessMessageHandler =
         match result with
         | NotFound -> Results.NotFound()
         | Skipped -> Results.Ok(box {| skipped = true |})
+        | Logged -> Results.Ok(box {| logged = true |})
         | ProcessedNoise -> Results.Ok(box {| noise = true |})
         | Processed(topic, tasks) -> Results.Ok(box {| topic = topic; tasks = tasks |})
         | LlmError msg -> Results.Json({| error = msg |}, statusCode = 502)
