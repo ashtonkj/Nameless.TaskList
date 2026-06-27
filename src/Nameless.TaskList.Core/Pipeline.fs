@@ -31,6 +31,12 @@ module Pipeline =
 
     let private isoTimestamp (ts: System.DateTime) = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
 
+    /// WhatsApp newsletters (@newsletter) and statuses (@broadcast) are one-to-many feeds.
+    /// Their imperative content is addressed to the whole audience, never the owner personally.
+    let private isBroadcastChannel (chatJid: string) =
+        let j = if isNull chatJid then "" else chatJid
+        j.EndsWith("@newsletter") || j.EndsWith("@broadcast")
+
     /// The later of an existing ISO-8601 timestamp and a new message time. Topic
     /// last_updated must never regress when an out-of-order (older) message is matched
     /// into a topic, which would otherwise push last_updated below first_seen.
@@ -340,6 +346,16 @@ module Pipeline =
                     id chatJid e ((if isNull classifyReply then "<null>" else classifyReply.Trim()).Replace("\n", " "))
                 LlmError e
             | Ok classification ->
+
+            // Broadcast feeds (newsletters/status) never carry the owner's personal to-dos:
+            // their imperatives ("avoid the area", "log a call") address the whole audience.
+            // Suppress task/event/commitment extraction for them; the topic (to track the
+            // thread) and any durable notes still get written.
+            let classification =
+                if isBroadcastChannel chatJid then
+                    { classification with
+                        Entities = { classification.Entities with Tasks = [||]; Events = [||]; Commitments = [||] } }
+                else classification
 
             if classification.Noise then
                 // Minimal message record, then stop.
