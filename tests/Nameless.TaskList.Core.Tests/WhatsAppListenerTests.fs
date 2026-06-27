@@ -72,3 +72,63 @@ let ``catchUp on no new messages leaves the cursor unchanged`` () =
     let next = WhatsAppListener.catchUp mb (fun id _ -> seen.Add id) { Since = t }
     Assert.Empty(seen)
     Assert.Equal(t, next.Since)
+
+open System.Threading
+
+// Fake listener: records Subscribe, then WaitNext returns scripted batches in order; when
+// exhausted it throws OperationCanceledException to end the session cleanly.
+type FakeListener(batches: string list list, events: ResizeArray<string>) =
+    let queue = System.Collections.Generic.Queue<string list>(batches)
+    interface INotificationListener with
+        member _.Subscribe(channel) = events.Add(sprintf "subscribe:%s" channel)
+        member _.WaitNext(_token) =
+            if queue.Count = 0 then raise (OperationCanceledException())
+            else queue.Dequeue()
+
+type FakeCursorStore() =
+    member val Saved = ResizeArray<ListenCursor>() with get
+    member val Current = { Since = DateTime.MinValue } with get, set
+    interface IListenCursorStore with
+        member this.Load() = this.Current
+        member this.Save(c) = this.Current <- c; this.Saved.Add c
+
+let private payload id (iso: string) =
+    sprintf """{"id":"%s","chat_jid":"c@s","timestamp":"%s"}""" id iso
+
+[<Fact>]
+let ``runSession subscribes before catch-up, then dispatches live payloads`` () =
+    let events = ResizeArray<string>()
+    // Catch-up source records "catchup" so we can assert ordering relative to subscribe.
+    let mb =
+        { new IMessageSource with
+            member _.GetMessage(_, _) = None
+            member _.GetRecent(_, _, _) = []
+            member _.GetMessagesSince(_, _) = events.Add "catchup"; []
+            member _.GetMediaBytes(_, _) = None }
+    let listener = FakeListener([ [ payload "<a>" "2026-06-18T10:00:00+02:00" ] ], events)
+    let store = FakeCursorStore()
+    WhatsAppListener.runSession listener store mb
+        (fun id _ -> events.Add(sprintf "process:%s" id))
+        "whatsapp_new_message" (fun _ -> ()) CancellationToken.None
+    Assert.Equal<string list>(
+        [ "subscribe:whatsapp_new_message"; "catchup"; "process:<a>" ], List.ofSeq events)
+    // cursor advanced to the live payload's SAST timestamp
+    Assert.Equal(DateTime(2026, 6, 18, 10, 0, 0), store.Current.Since)
+
+[<Fact>]
+let ``runSession skips an unparseable payload without dispatching or dying`` () =
+    let events = ResizeArray<string>()
+    let mb =
+        { new IMessageSource with
+            member _.GetMessage(_, _) = None
+            member _.GetRecent(_, _, _) = []
+            member _.GetMessagesSince(_, _) = []
+            member _.GetMediaBytes(_, _) = None }
+    let listener = FakeListener([ [ "{garbage"; payload "<b>" "2026-06-18T11:00:00+02:00" ] ], ResizeArray())
+    let store = FakeCursorStore()
+    let skipped = ResizeArray<string>()
+    WhatsAppListener.runSession listener store mb
+        (fun id _ -> events.Add(sprintf "process:%s" id))
+        "whatsapp_new_message" (fun s -> skipped.Add s) CancellationToken.None
+    Assert.Equal<string list>([ "process:<b>" ], List.ofSeq events)   // good one still processed
+    Assert.Equal(1, skipped.Count)                                    // bad one logged

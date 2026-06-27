@@ -47,3 +47,16 @@ type IMailbox =
 type IEmailCursorStore =
     abstract member Load : unit -> EmailCursor
     abstract member Save : cursor: EmailCursor -> unit
+
+/// A persistent Postgres LISTEN connection, behind a port so the session loop is testable.
+type INotificationListener =
+    /// Issue LISTEN on the channel. After this, the server buffers notifications for delivery.
+    abstract member Subscribe : channel: string -> unit
+    /// Block until at least one notification is available, returning all currently-available
+    /// payloads. Throws OperationCanceledException when the token is cancelled.
+    abstract member WaitNext : token: System.Threading.CancellationToken -> string list
+
+/// Persists the WhatsApp listener catch-up cursor.
+type IListenCursorStore =
+    abstract member Load : unit -> ListenCursor
+    abstract member Save : cursor: ListenCursor -> unit
