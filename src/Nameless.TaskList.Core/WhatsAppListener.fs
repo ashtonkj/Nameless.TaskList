@@ -19,7 +19,7 @@ module WhatsAppListener =
                 | _ -> None
             let id = str "id"
             let jid = str "chat_jid"
-            if Option.isNone id || Option.isNone jid || 
+            if Option.isNone id || Option.isNone jid ||
                String.IsNullOrWhiteSpace (Option.defaultValue "" id) ||
                String.IsNullOrWhiteSpace (Option.defaultValue "" jid) then
                 None
@@ -30,3 +30,14 @@ module WhatsAppListener =
                     | _ -> DateTimeOffset.MinValue
                 Some { Id = Option.defaultValue "" id; ChatJid = Option.defaultValue "" jid; Timestamp = ts }
         with _ -> None
+
+    /// Drain every message since the cursor (all chats, ascending — GetMessagesSince already
+    /// orders by timestamp ASC) through processOne, returning the cursor advanced to the latest
+    /// processed message's timestamp. Re-processing is safe (pipeline idempotency).
+    let catchUp (messages: IMessageSource) (processOne: string -> string -> unit) (cursor: ListenCursor) : ListenCursor =
+        let msgs = messages.GetMessagesSince(None, cursor.Since)
+        let mutable latest = cursor.Since
+        for m in msgs do
+            processOne m.Id m.ChatJid
+            if m.Timestamp > latest then latest <- m.Timestamp
+        { Since = latest }

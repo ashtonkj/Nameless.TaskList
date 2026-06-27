@@ -33,3 +33,42 @@ let ``parse tolerates a missing timestamp`` () =
     match WhatsAppListener.parse """{"id":"a","chat_jid":"x@s"}""" with
     | Some p -> Assert.Equal(DateTimeOffset.MinValue, p.Timestamp)
     | None -> failwith "expected Some"
+
+open Nameless.TaskList.Core.Ports
+
+// IMessageSource fake whose GetMessagesSince returns a fixed list and records the `since` asked for.
+type FakeSince(sinceList: ChatMessage list) =
+    member val AskedSince = DateTime.MinValue with get, set
+    interface IMessageSource with
+        member _.GetMessage(_id, _jid) = None
+        member _.GetRecent(_jid, _before, _ex) = []
+        member this.GetMessagesSince(_chatJid, since) =
+            this.AskedSince <- since
+            sinceList
+        member _.GetMediaBytes(_id, _jid) = None
+
+let private msg id (ts: DateTime) : ChatMessage =
+    { Id = id; ChatJid = "c@s"; ChatName = "C"; NormalizedChatName = "C"; IsGroup = false
+      SenderId = "c"; SenderName = "C"; SenderPushName = null; SenderSavedName = null
+      SenderBusinessName = null; IsFromMe = false; Platform = "whatsapp-direct"; IsBroadcast = false
+      Content = "hi"; MediaType = null; FileName = null; AlbumId = null; AlbumIndex = None; Timestamp = ts }
+
+[<Fact>]
+let ``catchUp processes since-cursor messages and advances to the latest timestamp`` () =
+    let t1 = DateTime(2026, 6, 18, 10, 0, 0)
+    let t2 = DateTime(2026, 6, 18, 11, 0, 0)
+    let mb = FakeSince([ msg "<a>" t1; msg "<b>" t2 ])
+    let seen = ResizeArray<string>()
+    let next = WhatsAppListener.catchUp mb (fun id _ -> seen.Add id) { Since = t1 }
+    Assert.Equal(t1, mb.AskedSince)                  // queried from the stored cursor
+    Assert.Equal<string list>([ "<a>"; "<b>" ], List.ofSeq seen)
+    Assert.Equal(t2, next.Since)                      // advanced to the latest processed
+
+[<Fact>]
+let ``catchUp on no new messages leaves the cursor unchanged`` () =
+    let t = DateTime(2026, 6, 18, 10, 0, 0)
+    let mb = FakeSince([])
+    let seen = ResizeArray<string>()
+    let next = WhatsAppListener.catchUp mb (fun id _ -> seen.Add id) { Since = t }
+    Assert.Empty(seen)
+    Assert.Equal(t, next.Since)
