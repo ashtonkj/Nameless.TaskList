@@ -69,8 +69,13 @@ For each message, respond ONLY with a JSON object in this exact format:
 A message is noise if it is:
 - A reaction or emoji-only message
 - A simple acknowledgement ("ok", "thanks", "👍", "noted")
+- An expression of thanks, gratitude, praise, congratulations, or well-wishes that adds no new actionable or durable information ("Thanks so much for your help yesterday", "You're amazing", "Well done", "Happy it worked out for you")
+- A social pleasantry, greeting, or sign-off ("no problem", "happy to help", "have a good day", "speak soon")
+- A transient, automated, or single-use notification with no lasting value: a one-time access / gate / exit / door / OTP / verification code (e.g. "TAP exit 19678 valid for 1 exit till ..."), a routine status ping ("delivered", "on my way", "all cameras are online", "back online"), or any auto-generated machine message. These expire almost immediately and are never worth a topic or note.
 - Off-topic social chat with no actionable content
 - A forwarded joke, meme description, or chain message
+
+A noise message must NOT create a topic, task, event, note, or commitment: set noise: true and leave the rest empty. When the ONLY substance of a message is gratitude, acknowledgement, or pleasantry, it is noise even if politely worded at length.
 
 TASK DISCIPLINE — apply before filling "tasks":
 A task exists ONLY when the OWNER is the one who must personally act. For every candidate, ask:
