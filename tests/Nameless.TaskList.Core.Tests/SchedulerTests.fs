@@ -1,7 +1,10 @@
 module Nameless.TaskList.Core.Tests.SchedulerTests
 
 open System
+open System.IO
 open Nameless.TaskList.Core
+open Nameless.TaskList.Core.Ports
+open Nameless.TaskList.Core.Adapters
 open Xunit
 
 [<Fact>]
@@ -111,3 +114,16 @@ let ``dueTasks does not re-run a weekly task already run this week`` () =
 let ``dueTasks never-run weekly does not fire on a non-slot day`` () =
     let now = System.DateTime(2026, 7, 1, 12, 0, 0)   // Wednesday, slot is Monday
     Assert.Empty(Scheduler.dueTasks now [ weekly "weekly-digest" System.DayOfWeek.Monday 7 0 ] (stateOf []))
+
+[<Fact>]
+let ``FileSystemSchedulerStateStore round-trips, empty when missing`` () =
+    let path = Path.Combine(Path.GetTempPath(), "sched-" + Guid.NewGuid().ToString("N") + ".json")
+    try
+        let store = FileSystemSchedulerStateStore(path) :> ISchedulerStateStore
+        Assert.Empty((store.Load()).LastRuns)
+        let s = { LastRuns = System.Collections.Generic.Dictionary(dict [ "daily-digest", DateTime(2026, 6, 28, 7, 0, 0) ]) }
+        store.Save s
+        let reloaded = (FileSystemSchedulerStateStore(path) :> ISchedulerStateStore).Load()
+        Assert.Equal(DateTime(2026, 6, 28, 7, 0, 0), reloaded.LastRuns.["daily-digest"])
+    finally
+        (try File.Delete path with _ -> ())

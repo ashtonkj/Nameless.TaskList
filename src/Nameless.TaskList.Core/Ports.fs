@@ -60,3 +60,8 @@ type INotificationListener =
 type IListenCursorStore =
     abstract member Load : unit -> ListenCursor
     abstract member Save : cursor: ListenCursor -> unit
+
+/// Persists the in-app scheduler's per-task last-run state.
+type ISchedulerStateStore =
+    abstract member Load : unit -> SchedulerState
+    abstract member Save : state: SchedulerState -> unit
