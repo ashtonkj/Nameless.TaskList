@@ -189,6 +189,8 @@ module Adapters =
         let received = System.Collections.Generic.Queue<string>()
         interface INotificationListener with
             member _.Subscribe(channel) =
+                if not (isNull conn) then (try conn.Dispose() with _ -> ())
+                received.Clear()
                 conn <- new NpgsqlConnection(connectionString)
                 conn.Open()
                 conn.Notification.Add(fun e -> received.Enqueue e.Payload)
@@ -200,6 +202,8 @@ module Adapters =
                 if received.Count = 0 then
                     conn.WaitAsync(token).GetAwaiter().GetResult() |> ignore
                 [ while received.Count > 0 do received.Dequeue() ]
+        interface System.IDisposable with
+            member _.Dispose() = if not (isNull conn) then (try conn.Dispose() with _ -> ())
 
     // ---- Message source over Postgres ----
     let private getStringOrNull (reader: NpgsqlDataReader) (col: string) =
