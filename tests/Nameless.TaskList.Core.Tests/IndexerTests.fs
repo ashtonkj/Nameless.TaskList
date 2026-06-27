@@ -1,5 +1,6 @@
 module Nameless.TaskList.Core.Tests.IndexerTests
 
+open System
 open Nameless.TaskList.Core
 open Nameless.TaskList.Core.Ports
 open Nameless.TaskList.Core.Tests.Fakes
@@ -103,3 +104,28 @@ let ``regenerate writes a relationship index and drops dangling edges`` () =
     Assert.Contains("title: Relationship Index", idx)
     Assert.Contains("[[relationships/dr-naidoo-ethan]]", idx)
     Assert.DoesNotContain("[[relationships/ethan-ghost]]", idx)
+
+let private cfg : Indexer.TopicSweepConfig = { ResolvedArchiveAfterDays = 14; DormantArchiveAfterDays = 90 }
+let private now = DateTime(2026, 6, 27, 12, 0, 0)
+let private daysAgo (d: int) = now.AddDays(float -d).ToString("yyyy-MM-ddTHH:mm:sszzz")
+
+[<Fact>]
+let ``active topic idle past the dormant threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "active" (daysAgo 100))
+
+[<Fact>]
+let ``active topic within the dormant threshold is unchanged`` () =
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "active" (daysAgo 30))
+
+[<Fact>]
+let ``resolved topic idle past the resolved threshold is archived`` () =
+    Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "resolved" (daysAgo 20))
+
+[<Fact>]
+let ``resolved topic within the resolved threshold is unchanged`` () =
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "resolved" (daysAgo 5))
+
+[<Fact>]
+let ``already-archived and unparseable dates are left unchanged`` () =
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "archived" (daysAgo 999))
+    Assert.Equal(None, Indexer.nextTopicStatus cfg now "active" "not-a-date")

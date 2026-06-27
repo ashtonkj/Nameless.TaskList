@@ -10,6 +10,21 @@ module Indexer =
         { Tasks: int; Topics: int; Events: int; Commitments: int
           Notes: int; People: int; Channels: int; Relationships: int; Skipped: int }
 
+    type TopicSweepConfig = { ResolvedArchiveAfterDays: int; DormantArchiveAfterDays: int }
+
+    /// Decide a topic's next status from its current status, last-updated time, and now.
+    /// Pure. `Some s` when it should change; `None` when unchanged or the date can't be read.
+    let nextTopicStatus (cfg: TopicSweepConfig) (now: System.DateTime) (status: string) (lastUpdated: string) : string option =
+        let s = (if isNull status then "active" else status).Trim().ToLowerInvariant()
+        match System.DateTimeOffset.TryParse lastUpdated with
+        | true, ts ->
+            let idleDays = (now - ts.LocalDateTime).TotalDays
+            match s with
+            | "active"   when idleDays >= float cfg.DormantArchiveAfterDays  -> Some "archived"
+            | "resolved" when idleDays >= float cfg.ResolvedArchiveAfterDays -> Some "archived"
+            | _ -> None
+        | _ -> None
+
     // NOTE: must NOT be `private`. YamlDotNet (like System.Text.Json) only serializes
     // public types' members, so a private record serializes to `{}` — index files would
     // get an empty frontmatter instead of `type: Index` / title / last_updated.
