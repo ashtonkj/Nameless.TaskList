@@ -52,6 +52,8 @@ let private stateOf (pairs: (string * DateTime) list) : SchedulerState =
 
 let private daily name h m : Scheduler.ScheduledTask = { Name = name; Spec = Scheduler.Daily(h, m) }
 
+let private weekly name (d: System.DayOfWeek) h m : Scheduler.ScheduledTask = { Name = name; Spec = Scheduler.Weekly(d, h, m) }
+
 [<Fact>]
 let ``dueTasks includes a task never run whose slot has passed`` () =
     let now = DateTime(2026, 6, 28, 8, 0, 0)
@@ -91,3 +93,21 @@ let ``tick does not mutate the input state`` () =
     let input = stateOf []
     Scheduler.tick now [ daily "daily-digest" 7 0 ] input (fun _ -> ()) |> ignore
     Assert.Empty(input.LastRuns)   // original untouched
+
+[<Fact>]
+let ``dueTasks catches up a weekly task missed earlier in the week`` () =
+    let now = System.DateTime(2026, 7, 1, 12, 0, 0)   // Wednesday; slot Monday 2026-06-29 07:00 has passed
+    let state = stateOf [ "weekly-digest", System.DateTime(2026, 6, 22, 7, 0, 0) ]   // ran last week
+    let due = Scheduler.dueTasks now [ weekly "weekly-digest" System.DayOfWeek.Monday 7 0 ] state
+    Assert.Equal<string list>([ "weekly-digest" ], due |> List.map (fun t -> t.Name))
+
+[<Fact>]
+let ``dueTasks does not re-run a weekly task already run this week`` () =
+    let now = System.DateTime(2026, 7, 1, 12, 0, 0)   // Wednesday
+    let state = stateOf [ "weekly-digest", System.DateTime(2026, 6, 29, 7, 0, 0) ]   // ran this Monday
+    Assert.Empty(Scheduler.dueTasks now [ weekly "weekly-digest" System.DayOfWeek.Monday 7 0 ] state)
+
+[<Fact>]
+let ``dueTasks never-run weekly does not fire on a non-slot day`` () =
+    let now = System.DateTime(2026, 7, 1, 12, 0, 0)   // Wednesday, slot is Monday
+    Assert.Empty(Scheduler.dueTasks now [ weekly "weekly-digest" System.DayOfWeek.Monday 7 0 ] (stateOf []))

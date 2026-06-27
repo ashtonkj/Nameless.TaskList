@@ -56,23 +56,21 @@ module Scheduler =
                 else back (candidate.AddDays(-1.0))
             back (DateTime(now.Year, now.Month, now.Day, h, m, 0))
 
-    let private lastRunOf (state: SchedulerState) (name: string) : DateTime =
-        match state.LastRuns.TryGetValue name with
-        | true, v -> v
-        | _ -> DateTime.MinValue
-
     /// Tasks whose most-recent scheduled slot is newer than their recorded last run.
+    /// A never-run task fires only once the CURRENT day's slot has passed (recent.Date = now.Date),
+    /// so first start does not retroactively run a slot that predates the app. A task that has run
+    /// before uses plain catch-up (lastRun < recent), which fires a missed daily OR weekly slot once.
     let dueTasks (now: DateTime) (tasks: ScheduledTask list) (state: SchedulerState) : ScheduledTask list =
         tasks |> List.filter (fun t ->
             let recent = mostRecentOccurrence now t.Spec
-            let isInCurrentCycle = recent.Date = now.Date
-            lastRunOf state t.Name < recent && isInCurrentCycle
-        )
+            match state.LastRuns.TryGetValue t.Name with
+            | true, lastRun -> lastRun < recent
+            | _ -> recent.Date = now.Date)
 
     /// Run each due task via `run`, returning a NEW state with those tasks' last-run set to `now`.
-    /// Does not mutate the input. `run` is expected to swallow its own failures (the host service
-    /// wraps each task) so one failure never aborts the others; last-run advances regardless, so a
-    /// failed run simply waits for its next slot rather than retrying every tick.
+    /// Does not mutate the input. The host service wraps each task so one failure never aborts the
+    /// others; last-run advances regardless, so a failed run simply waits for its next slot rather
+    /// than retrying every tick.
     let tick (now: DateTime) (tasks: ScheduledTask list) (state: SchedulerState) (run: ScheduledTask -> unit) : SchedulerState =
         let due = dueTasks now tasks state
         for t in due do run t
