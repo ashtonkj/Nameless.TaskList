@@ -49,6 +49,17 @@ module Pipeline =
         else people |> Array.filter (fun p ->
             not (endearments.Contains((if isNull p then "" else p).Trim().ToLowerInvariant())))
 
+    /// Automated estate gate-access codes ("... TAP exit 19678 valid for 1 exit till ...") are
+    /// one-time machine messages — pure noise whichever direction they travel. The model insists
+    /// on topic-ing them, so match them by shape and skip classification entirely. Add further
+    /// automated-notification shapes here as they surface.
+    let private automatedNoiseRegexes =
+        let opts = System.Text.RegularExpressions.RegexOptions.IgnoreCase ||| System.Text.RegularExpressions.RegexOptions.Compiled
+        [ System.Text.RegularExpressions.Regex(@"\bTAP\s+(?:exit|entry|entrance)\s+\d+\s+valid\s+for\b", opts) ]
+    let isAutomatedNoise (content: string) : bool =
+        not (System.String.IsNullOrWhiteSpace content)
+        && automatedNoiseRegexes |> List.exists (fun r -> r.IsMatch content)
+
     /// The later of an existing ISO-8601 timestamp and a new message time. Topic
     /// last_updated must never regress when an out-of-order (older) message is matched
     /// into a topic, which would otherwise push last_updated below first_seen.
@@ -330,11 +341,11 @@ module Pipeline =
                 elif audioDerived then "## Voice note (transcribed)\n"
                 else "## Raw\n"
 
-            // --- Short-circuit: nothing to classify (e.g. caption-less video/document with no
-            //     vision/transcription text). Classifying empty input just makes the model chat
-            //     back ("Please provide the message..."), which fails to parse. Record as noise
-            //     and stop, before any LLM call. ---
-            if System.String.IsNullOrWhiteSpace msg.Content then
+            // --- Short-circuit to noise, before any LLM call, when there is nothing worth
+            //     classifying: empty input (e.g. a caption-less video — the model would just chat
+            //     back "Please provide the message...", which fails to parse), or content matching
+            //     a known automated-noise shape (gate access codes the model insists on topic-ing). ---
+            if System.String.IsNullOrWhiteSpace msg.Content || isAutomatedNoise msg.Content then
                 let record : Message =
                     { Type = "Message"; Channel = channelSlug; Timestamp = isoTimestamp msg.Timestamp
                       Sender = msg.SenderName; Noise = true; Topic = ""

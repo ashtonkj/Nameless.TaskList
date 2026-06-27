@@ -654,6 +654,14 @@ let private seedPerson (vault: FakeVault) (path: string) (title: string) (contex
     vault.Seed(path, sprintf "---\ntype: Person\ntitle: %s\nrole: spouse\ncontext: [%s]\nchannel: \"\"\nphone: \"\"\nemail: \"\"\ntags: []\naliases: %s\n---\nstub\n" title context aliasYaml)
 
 [<Fact>]
+let ``isAutomatedNoise matches TAP gate codes but not ordinary messages`` () =
+    Assert.True(Pipeline.isAutomatedNoise "Bishops G Steve TAP exit 19678 valid for 1 exit till 2026-06-22 23:59:59")
+    Assert.True(Pipeline.isAutomatedNoise "TAP entry 22 valid for 2 entries till tomorrow")
+    Assert.False(Pipeline.isAutomatedNoise "Can you tap the exit button to leave the app?")
+    Assert.False(Pipeline.isAutomatedNoise "Call Dr Greef tomorrow")
+    Assert.False(Pipeline.isAutomatedNoise "")
+
+[<Fact>]
 let ``stripEndearments removes pet names but keeps real names`` () =
     let out = Pipeline.stripEndearments [| "Pookie"; "Dr Greef"; " babe "; "Nancy"; "LOVE" |]
     Assert.Equal<string array>([| "Dr Greef"; "Nancy" |], out)
