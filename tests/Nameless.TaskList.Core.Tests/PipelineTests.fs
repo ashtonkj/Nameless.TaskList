@@ -1056,3 +1056,48 @@ let ``a mention that exactly resolves skips the fuzzy matcher`` () =
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) -> Assert.Equal(1, vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> Seq.length)
     | other -> failwithf "expected Processed, got %A" other
+
+// ── Topic resolution / re-activation tests ─────────────────────────────────
+
+[<Fact>]
+let ``a matched topic whose update says resolved becomes status resolved`` () =
+    let vault = FakeVault()
+    seedTopic vault "birthday-party" "Birthday party" "planning the party"
+    let embedder = FakeEmbedder(fun t -> if t.Contains("birthday") || t.Contains("party") || t.Contains("Birthday") then [| 1.0; 0.0 |] else [| 0.0; 1.0 |]) :> IEmbedder
+    let confirm = Responses.final """{"match":true,"topic_slug":"birthday-party","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    let topicBody = Responses.final "STATUS: resolved\n## Current understanding\nx\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ signalClassify; confirm; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Contains("status: resolved", vault.Files.[topic])
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``a new topic is never marked resolved even if the reply says so`` () =
+    let vault = FakeVault()
+    // Seed an unrelated topic so the embedding shortlist path runs; the intent contains
+    // "birthday" so its vector is [1;0], the unrelated topic's vector is [0;1] -> cosine 0 < floor
+    // -> empty shortlist -> new topic fast path (no LLM topic-match call).
+    seedTopic vault "unrelated" "Unrelated topic" "something else entirely"
+    let embedder = FakeEmbedder(fun t -> if t.Contains("birthday") || t.Contains("party") then [| 1.0; 0.0 |] else [| 0.0; 1.0 |]) :> IEmbedder
+    let topicBody = Responses.final "STATUS: resolved\n## Current understanding\nx\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ signalClassify; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Contains("status: active", vault.Files.[topic])
+    | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``a new message matching a resolved topic re-activates it`` () =
+    let vault = FakeVault()
+    vault.Seed("topics/active/birthday-party.md",
+               "---\ntype: Topic\ntitle: Birthday party\ndescription: d\nstatus: resolved\ncontext:\n  - family\n" +
+               "first_seen: 2026-06-10T09:00:00+02:00\nlast_updated: 2026-06-11T09:00:00+02:00\n---\n## Current understanding\nplanning the party\n\n## Open questions\n\n## Resolved\n")
+    let embedder = FakeEmbedder(fun t -> if t.Contains("birthday") || t.Contains("party") || t.Contains("Birthday") then [| 1.0; 0.0 |] else [| 0.0; 1.0 |]) :> IEmbedder
+    let confirm = Responses.final """{"match":true,"topic_slug":"birthday-party","confidence":0.9,"match_reason":"same","new_topic_title":null}"""
+    let topicBody = Responses.final "STATUS: active\n## Current understanding\nx\n\n## Open questions\n\n## Resolved\n"
+    let chat = FakeChatClient([ signalClassify; confirm; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) -> Assert.Contains("status: active", vault.Files.[topic])
+    | other -> failwithf "expected Processed, got %A" other

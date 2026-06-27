@@ -446,11 +446,11 @@ module Pipeline =
                         |> Some
                     with _ -> None
 
-            let topicOutcome : Result<string * string, string> =
+            let topicOutcome : Result<string * string * bool, string> =
                 match shortlist with
                 | Some [] ->
                     // clearly new — skip the LLM topic-match call
-                    Ok (createNewTopic (titleFromIntent classification.Intent))
+                    let (s, p) = createNewTopic (titleFromIntent classification.Intent) in Ok (s, p, true)
                 | Some candidates ->
                     let candidateText =
                         candidates
@@ -463,10 +463,10 @@ module Pipeline =
                         let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
                         let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
                         match m.Match, matched with
-                        | true, Some (slug, _, _, _) -> Ok (slug, Naming.topicPath slug)
+                        | true, Some (slug, _, _, _) -> Ok (slug, Naming.topicPath slug, false)
                         | _ ->
                             let title = if System.String.IsNullOrWhiteSpace m.NewTopicTitle then titleFromIntent classification.Intent else m.NewTopicTitle
-                            Ok (createNewTopic title)
+                            let (s, p) = createNewTopic title in Ok (s, p, true)
                 | None ->
                     // fallback: today's tool-enabled match over all active topics
                     let topicTools = [ Tools.getTopics deps.Vault; Tools.getTopic deps.Vault ]
@@ -474,14 +474,14 @@ module Pipeline =
                     match Prompts.parseTopicMatch reply with
                     | Error e -> Error e
                     | Ok m ->
-                        if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug)
-                        else Ok (createNewTopic m.NewTopicTitle)
+                        if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug, false)
+                        else let (s, p) = createNewTopic m.NewTopicTitle in Ok (s, p, true)
 
             match topicOutcome with
             | Error e ->
                 eprintfn "[topic-match-error] msg=%s chat=%s: %s" id chatJid e
                 LlmError e
-            | Ok (_, topicPath) ->
+            | Ok (_, topicPath, isNewTopic) ->
 
             // --- Step: create task files via the shared entity writer ---
             let taskSpec : EntitySpec<Task> =
@@ -886,16 +886,20 @@ module Pipeline =
                 // flows in directly; history remains available to the classify step, where it
                 // disambiguates meaning without polluting stored prose.
                 let user = Prompts.topicUpdateUser "" existing.Content msg.Content classification.Intent
-                let newBody = Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user
+                let resolved, newBody = Prompts.parseTopicUpdate (Agent.runConversation deps.Chat [] Prompts.topicUpdateSystem user)
                 match existing.FrontMatter with
                 | Some fm ->
                     let t = Frontmatter.deserialize<Topic> fm
+                    // New topics are always active; a matched topic is resolved only when the
+                    // model said so this turn, otherwise active (re-activating a resolved one).
+                    let newStatus = if isNewTopic then "active" elif resolved then "resolved" else "active"
                     let merged =
                         { t with
+                            Status = newStatus
                             LastUpdated = laterIso t.LastUpdated msg.Timestamp
-                            MessageRefs = Array.append t.MessageRefs [| messagePath |]
-                            SpawnedTasks = Array.append t.SpawnedTasks (Array.ofList taskPaths)
-                            SpawnedEvents = Array.append t.SpawnedEvents (Array.ofList eventPaths) }
+                            MessageRefs = Array.append (if isNull t.MessageRefs then [||] else t.MessageRefs) [| messagePath |]
+                            SpawnedTasks = Array.append (if isNull t.SpawnedTasks then [||] else t.SpawnedTasks) (Array.ofList taskPaths)
+                            SpawnedEvents = Array.append (if isNull t.SpawnedEvents then [||] else t.SpawnedEvents) (Array.ofList eventPaths) }
                     // Resolve every person on the topic (title + path) once, then use that
                     // list both to wikilink their names inline throughout the body and to
                     // append a deterministic "## Linked people" section. Linking against the
