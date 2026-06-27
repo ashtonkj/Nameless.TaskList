@@ -194,3 +194,11 @@ type RawEmail =
 /// Initialized distinguishes a never-run cursor (default false) from one legitimately
 /// resumed at UID 0, so the first poll seeds forward instead of scanning the whole mailbox.
 type EmailCursor = { UidValidity: uint32; LastUid: uint32; Initialized: bool }
+
+/// A decoded `whatsapp_new_message` NOTIFY payload. Only Id/ChatJid drive the pipeline;
+/// Timestamp advances the catch-up cursor.
+type NotifyPayload = { Id: string; ChatJid: string; Timestamp: System.DateTimeOffset }
+
+/// Persisted catch-up cursor for the WhatsApp listener: the last-processed message time
+/// (SAST wall-clock). Serialized to JSON — keep public.
+type ListenCursor = { Since: System.DateTime }
