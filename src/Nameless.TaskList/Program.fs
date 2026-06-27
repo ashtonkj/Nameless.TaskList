@@ -7,6 +7,7 @@ open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.Logging
 open Nameless.TaskList.Core.Ports
 open Nameless.TaskList.Core.Adapters
 open Nameless.TaskList.Core.Pipeline
@@ -60,8 +61,6 @@ module Program =
             let retain = match System.Int32.TryParse(cfg.["BulkJobs:Retain"]) with | true, v -> v | _ -> 20
             BulkJobs.BulkJobRegistry(store, retain)) |> ignore
 
-        let app = builder.Build()
-
         let buildDeps (messages: IMessageSource) (vault: IVault) (chat: IChatClient)
                       (embedder: IEmbedder) (vision: IVision) (transcriber: ITranscriber) : PipelineDeps =
             let topK = match System.Int32.TryParse(cfg.["TopicMatch:TopK"]) with | true, v -> v | _ -> 5
@@ -78,6 +77,31 @@ module Program =
               TaskTopK = taskTopK; TaskSimilarityFloor = taskFloor
               PeopleTopK = peopleTopK; PeopleSimilarityFloor = peopleFloor
               Vision = vision; Transcriber = transcriber }
+
+        // Email channel: register the IMAP poller only when enabled (off by default + in tests).
+        if cfg.["Imap:Enabled"] = "true" then
+            builder.Services.AddHostedService<ImapPollerService>(fun sp ->
+                let port = match System.Int32.TryParse(cfg.["Imap:Port"]) with | true, n -> n | _ -> 993
+                let useSsl = cfg.["Imap:UseSsl"] <> "false"
+                let folder = if System.String.IsNullOrWhiteSpace cfg.["Imap:Folder"] then "INBOX" else cfg.["Imap:Folder"]
+                let pollSeconds = match System.Int32.TryParse(cfg.["Imap:PollSeconds"]) with | true, n -> n | _ -> 120
+                let mailbox =
+                    MailKitMailbox(cfg.["Imap:Host"], port, useSsl, cfg.["Imap:User"], cfg.["Imap:Password"]) :> IMailbox
+                let cursorPath = System.IO.Path.Combine(cfg.["Vault:Root"], ".taskmeister", "email-cursor.json")
+                let cursorStore = FileSystemEmailCursorStore(cursorPath) :> IEmailCursorStore
+                let source = ImapMessageSource()
+                let buildEmailDeps (s: ImapMessageSource) =
+                    buildDeps
+                        (s :> IMessageSource)
+                        (sp.GetRequiredService<IVault>())
+                        (sp.GetRequiredService<IChatClient>())
+                        (sp.GetRequiredService<IEmbedder>())
+                        (sp.GetRequiredService<IVision>())
+                        (sp.GetRequiredService<ITranscriber>())
+                let logger = sp.GetRequiredService<ILogger<ImapPollerService>>()
+                new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, logger)) |> ignore
+
+        let app = builder.Build()
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, ITranscriber, Microsoft.AspNetCore.Http.IResult>(
             fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) (vision: IVision) (transcriber: ITranscriber) ->
