@@ -70,6 +70,10 @@ let ``channelPathFor whatsapp keeps the whatsapp dir`` () =
     Assert.Equal("channels/whatsapp/wife.md", Naming.channelPathFor "whatsapp-direct" "wife")
 
 [<Fact>]
+let ``channelPathFor whatsapp-group keeps the whatsapp dir`` () =
+    Assert.Equal("channels/whatsapp/family.md", Naming.channelPathFor "whatsapp-group" "family")
+
+[<Fact>]
 let ``messagePathFor whatsapp matches the legacy path`` () =
     let ts = DateTime(2026, 6, 15, 14, 17, 45, DateTimeKind.Utc)
     Assert.Equal("messages/wife/2026-06-15T14-17-45.md", Naming.messagePathFor "whatsapp-direct" "wife" ts "ignored")
