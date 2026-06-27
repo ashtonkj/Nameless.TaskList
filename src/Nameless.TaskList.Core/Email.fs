@@ -86,13 +86,22 @@ open Nameless.TaskList.Core.Ports
 module EmailPoller =
 
     /// Fetch new mail since the stored cursor, mapped to ChatMessages, and the cursor to
-    /// persist once they are processed. A UIDVALIDITY change resets to a full re-scan
-    /// (idempotency by message-id path makes the re-scan harmless). The cursor is returned,
-    /// NOT saved, so the caller can persist it only after processing succeeds.
-    let fetch (mailbox: IMailbox) (stored: EmailCursor) (folder: string) : ChatMessage list * EmailCursor =
+    /// persist once they are processed. The cursor is returned, NOT saved, so the caller can
+    /// persist it only after processing succeeds (a crash before save re-processes idempotently).
+    ///
+    /// On the first run (uninitialised cursor) or a UIDVALIDITY change, the cursor is seeded
+    /// FORWARD rather than scanning the whole mailbox: only the newest `initialBackfill` messages
+    /// are processed (0 = go-forward only). This avoids flooding the pipeline on first enable.
+    let fetch (mailbox: IMailbox) (stored: EmailCursor) (folder: string) (initialBackfill: uint32)
+        : ChatMessage list * EmailCursor =
         let validity = mailbox.UidValidity folder
-        let since = if validity = stored.UidValidity then stored.LastUid else 0u
+        let resume = stored.Initialized && validity = stored.UidValidity
+        let since =
+            if resume then stored.LastUid
+            else
+                let highest = mailbox.HighestUid folder
+                if highest > initialBackfill then highest - initialBackfill else 0u
         let raws = mailbox.FetchSince(folder, since)
         let highest = raws |> List.fold (fun acc r -> max acc r.Uid) since
         let mails = raws |> List.map Email.toChatMessage
-        mails, { UidValidity = validity; LastUid = highest }
+        mails, { UidValidity = validity; LastUid = highest; Initialized = true }

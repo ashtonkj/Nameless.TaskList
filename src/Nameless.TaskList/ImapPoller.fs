@@ -14,7 +14,7 @@ open Nameless.TaskList.Core.Pipeline
 type ImapPollerService
     (mailbox: IMailbox, cursorStore: IEmailCursorStore, source: ImapMessageSource,
      buildEmailDeps: ImapMessageSource -> PipelineDeps, folder: string, pollSeconds: int,
-     logger: ILogger<ImapPollerService>) =
+     initialBackfill: uint32, logger: ILogger<ImapPollerService>) =
     inherit BackgroundService()
 
     override _.ExecuteAsync(stoppingToken: CancellationToken) =
@@ -23,7 +23,7 @@ type ImapPollerService
             while not stoppingToken.IsCancellationRequested do
                 try
                     let stored = cursorStore.Load()
-                    let mails, next = EmailPoller.fetch mailbox stored folder
+                    let mails, next = EmailPoller.fetch mailbox stored folder initialBackfill
                     for cm in mails do
                         source.Put cm
                         Pipeline.processMessage deps cm.Id cm.ChatJid |> ignore

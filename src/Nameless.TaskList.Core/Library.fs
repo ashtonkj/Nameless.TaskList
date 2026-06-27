@@ -191,4 +191,6 @@ type RawEmail =
 
 /// Per-account IMAP poll cursor. Serialized to JSON — keep public (a private record
 /// serializes to {}).
-type EmailCursor = { UidValidity: uint32; LastUid: uint32 }
+/// Initialized distinguishes a never-run cursor (default false) from one legitimately
+/// resumed at UID 0, so the first poll seeds forward instead of scanning the whole mailbox.
+type EmailCursor = { UidValidity: uint32; LastUid: uint32; Initialized: bool }
