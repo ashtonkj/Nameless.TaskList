@@ -45,6 +45,14 @@ let ``isBulk is true for precedence bulk`` () =
     Assert.True(Email.isBulk { raw () with Precedence = "bulk" })
 
 [<Fact>]
+let ``isBulk is true for precedence list`` () =
+    Assert.True(Email.isBulk { raw () with Precedence = "list" })
+
+[<Fact>]
+let ``isBulk is true for precedence junk`` () =
+    Assert.True(Email.isBulk { raw () with Precedence = "junk" })
+
+[<Fact>]
 let ``isBulk is false for an ordinary personal mail`` () =
     Assert.False(Email.isBulk (raw ()))
 
