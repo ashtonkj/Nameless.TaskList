@@ -7,6 +7,7 @@
     <ItemGroup>
         <Compile Include="ProcessMessage.fs"/>
         <Compile Include="ImapPoller.fs"/>
+        <Compile Include="WhatsAppListener.fs"/>
         <Compile Include="Program.fs"/>
     </ItemGroup>
 

@@ -183,6 +183,28 @@ module Adapters =
                 finally
                     (try Directory.Delete(workDir, true) with _ -> ())
 
+    // ---- Live Postgres LISTEN connection. Not unit-tested (opt-in integration test covers it). ----
+    type NpgsqlNotificationListener(connectionString: string) =
+        let mutable conn : NpgsqlConnection = null
+        let received = System.Collections.Generic.Queue<string>()
+        interface INotificationListener with
+            member _.Subscribe(channel) =
+                if not (isNull conn) then (try conn.Dispose() with _ -> ())
+                received.Clear()
+                conn <- new NpgsqlConnection(connectionString)
+                conn.Open()
+                conn.Notification.Add(fun e -> received.Enqueue e.Payload)
+                use cmd = new NpgsqlCommand(sprintf "LISTEN %s" channel, conn)
+                cmd.ExecuteNonQuery() |> ignore
+            member _.WaitNext(token) =
+                // Block until the server pushes at least one notification, then drain the queue.
+                // WaitAsync(CancellationToken) returns Task (not ValueTask), so call GetAwaiter().GetResult() directly.
+                if received.Count = 0 then
+                    conn.WaitAsync(token).GetAwaiter().GetResult() |> ignore
+                [ while received.Count > 0 do received.Dequeue() ]
+        interface System.IDisposable with
+            member _.Dispose() = if not (isNull conn) then (try conn.Dispose() with _ -> ())
+
     // ---- Message source over Postgres ----
     let private getStringOrNull (reader: NpgsqlDataReader) (col: string) =
         let ord = reader.GetOrdinal(col)
@@ -287,6 +309,19 @@ module Adapters =
                 |> List.ofSeq
             member _.GetMessagesSince(_chatJid, _since) = []
             member _.GetMediaBytes(_id, _chatJid) = None
+
+    // ---- WhatsApp listener catch-up cursor over a single JSON file. ----
+    type FileSystemListenCursorStore(path: string) =
+        interface IListenCursorStore with
+            member _.Save(cursor) =
+                let dir = Path.GetDirectoryName(path)
+                if not (String.IsNullOrEmpty dir) then Directory.CreateDirectory(dir) |> ignore
+                File.WriteAllText(path, JsonSerializer.Serialize(cursor))
+            member _.Load() =
+                try
+                    if File.Exists path then JsonSerializer.Deserialize<ListenCursor>(File.ReadAllText path)
+                    else { Since = DateTime.MinValue }
+                with _ -> { Since = DateTime.MinValue }
 
     // ---- Email poll cursor over a single JSON file. ----
     type FileSystemEmailCursorStore(path: string) =
