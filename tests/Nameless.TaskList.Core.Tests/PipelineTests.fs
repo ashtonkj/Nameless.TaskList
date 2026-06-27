@@ -1088,6 +1088,24 @@ let ``a new topic is never marked resolved even if the reply says so`` () =
     | other -> failwithf "expected Processed, got %A" other
 
 [<Fact>]
+let ``an archived topic is not a match candidate so a new topic is created`` () =
+    let vault = FakeVault()
+    vault.Seed("topics/active/birthday-party.md",
+               "---\ntype: Topic\ntitle: Birthday party\ndescription: d\nstatus: archived\ncontext:\n  - family\n" +
+               "first_seen: 2026-01-01T09:00:00+02:00\nlast_updated: 2026-01-01T09:00:00+02:00\n---\n## Current understanding\nplanning the party\n")
+    // Everything is "similar" by embedding; only the archived status should keep it out.
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |]) :> IEmbedder
+    let topicBody = Responses.final "STATUS: active\n## Current understanding\nx\n\n## Open questions\n\n## Resolved\n"
+    // No topic-match LLM response scripted: an empty candidate set must take the fast new-topic path.
+    let chat = FakeChatClient([ signalClassify; topicBody ])
+    let d = depsE vault chat embedder 5 0.5
+    match Pipeline.processMessage d "M1" "jid" with
+    | Processed(topic, _) ->
+        Assert.StartsWith("topics/active/", topic)
+        Assert.NotEqual<string>("topics/active/birthday-party.md", topic)
+    | other -> failwithf "expected Processed new topic, got %A" other
+
+[<Fact>]
 let ``a new message matching a resolved topic re-activates it`` () =
     let vault = FakeVault()
     vault.Seed("topics/active/birthday-party.md",

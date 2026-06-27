@@ -417,22 +417,28 @@ module Pipeline =
                 deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
                 slug, Naming.topicPath slug
 
-            // Active topics: (slug, title, understanding)
+            // Active topics: (slug, title, understanding) — archived topics are excluded.
+            // topicFiles tracks whether any topic files exist at all (for the shortlist fallback decision).
+            let topicFiles = deps.Vault.ListFiles "topics/active"
             let activeTopics =
-                deps.Vault.ListFiles "topics/active"
+                topicFiles
                 |> List.choose (fun path ->
                     try
                         let mf = MarkdownFile.FromString (deps.Vault.Read path)
                         match mf.FrontMatter with
                         | Some fm ->
                             let t = Frontmatter.deserialize<Topic> fm
-                            Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, understandingOf mf.Content)
+                            if (if isNull t.Status then "active" else t.Status).Trim().ToLowerInvariant() = "archived" then None
+                            else Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, understandingOf mf.Content)
                         | None -> None
                     with _ -> None)
 
             // Embedding shortlist: Some candidates (possibly empty) when embedding works; None to fall back.
+            // Use None (tool-enabled fallback) only when there are no topic files at all.
+            // When files exist but all are archived, treat as empty candidate set (fast new-topic path).
             let shortlist =
-                if List.isEmpty activeTopics then None
+                if List.isEmpty topicFiles then None
+                elif List.isEmpty activeTopics then Some []
                 else
                     try
                         let intentVec = deps.Embedder.Embed classification.Intent

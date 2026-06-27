@@ -41,7 +41,19 @@ module Tools =
         define "get_topics"
             "List currently active topics with their titles and current-understanding summaries."
             (noParams ())
-            (fun _ -> dumpDir vault "topics/active")
+            (fun _ ->
+                vault.ListFiles "topics/active"
+                |> List.choose (fun path ->
+                    try
+                        let mf = MarkdownFile.FromString (vault.Read path)
+                        match mf.FrontMatter with
+                        | Some fm ->
+                            let t = Frontmatter.deserialize<Topic> fm
+                            if (if isNull t.Status then "active" else t.Status).Trim().ToLowerInvariant() = "archived" then None
+                            else Some (sprintf "slug: %s\ntitle: %s" (System.IO.Path.GetFileNameWithoutExtension path) t.Title)
+                        | None -> None
+                    with _ -> None)
+                |> String.concat "\n\n")
 
     let getTopic (vault: IVault) : Tool =
         define "get_topic"
