@@ -345,7 +345,10 @@ Example: if the new message is "There's a SARS code needed; Kevin is coming tomo
 history happens to explain Standard Bank's incoming-forex form fields, do NOT add those form
 details to the body — they belong to a different message, not this update.
 
-Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
+Begin your reply with a single line that is exactly "STATUS: active" or "STATUS: resolved" —
+"resolved" only when this thread's matter is now concluded (its open questions answered, nothing
+left to do or track); otherwise "active". Then, on the following lines, respond with ONLY the
+updated markdown body (no frontmatter, no other explanation)."""
 
     /// Pull the first JSON object out of a possibly-chatty / fenced model reply.
     let private extractJson (raw: string) : string =
@@ -432,6 +435,20 @@ Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
         tryParse<Classification> raw |> Result.map normalizeClassification
     let parseTopicMatch (raw: string) : Result<TopicMatch, string> = tryParse<TopicMatch> raw
     let parseRelationships (raw: string) : Result<RelationshipExtraction, string> = tryParse<RelationshipExtraction> raw
+
+    /// Split a topic-update reply into (resolved, body). The model is asked to begin with a
+    /// single line "STATUS: active|resolved"; we read the first non-blank line, and on a match
+    /// strip it and set the flag. Anything else defaults to active with the whole reply as body
+    /// — conservative, since a wrongly-"resolved" topic would hide live work.
+    let parseTopicUpdate (raw: string) : bool * string =
+        let text = if isNull raw then "" else raw
+        let m = System.Text.RegularExpressions.Regex.Match(text, @"^\s*STATUS:\s*(resolved|active)\b\s*",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        if m.Success && m.Index = 0 then
+            let resolved = m.Groups.[1].Value.ToLowerInvariant() = "resolved"
+            (resolved, text.Substring(m.Length))
+        else
+            (false, text)
 
     /// Render recent prior messages — as returned by GetRecent (newest-first) — into an
     /// oldest→newest transcript for use as conversation context. Media-only turns (empty

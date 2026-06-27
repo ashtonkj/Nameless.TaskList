@@ -112,3 +112,23 @@ let ``parseRelationships returns Error on garbage`` () =
     match Prompts.parseRelationships "not json at all" with
     | Ok _ -> failwith "expected Error"
     | Error _ -> ()
+
+[<Fact>]
+let ``parseTopicUpdate reads a resolved marker and strips it from the body`` () =
+    let raw = "STATUS: resolved\n## Current understanding\nDone.\n"
+    let resolved, body = Prompts.parseTopicUpdate raw
+    Assert.True(resolved)
+    Assert.Equal("## Current understanding\nDone.", body.Trim())
+
+[<Fact>]
+let ``parseTopicUpdate reads an active marker (case-insensitive) and strips it`` () =
+    let resolved, body = Prompts.parseTopicUpdate "  status:  Active \n## Current understanding\nx"
+    Assert.False(resolved)
+    Assert.DoesNotContain("status", body.ToLowerInvariant())
+
+[<Fact>]
+let ``parseTopicUpdate defaults to active and keeps the whole body when no marker`` () =
+    let raw = "## Current understanding\nNo marker here.\n"
+    let resolved, body = Prompts.parseTopicUpdate raw
+    Assert.False(resolved)
+    Assert.Equal(raw, body)
