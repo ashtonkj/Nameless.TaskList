@@ -202,3 +202,6 @@ type NotifyPayload = { Id: string; ChatJid: string; Timestamp: System.DateTimeOf
 /// Persisted catch-up cursor for the WhatsApp listener: the last-processed message time
 /// (SAST wall-clock). Serialized to JSON — keep public.
 type ListenCursor = { Since: System.DateTime }
+
+/// Per-task last-run timestamps for the in-app scheduler. Serialized to JSON — keep public.
+type SchedulerState = { LastRuns: System.Collections.Generic.Dictionary<string, System.DateTime> }
