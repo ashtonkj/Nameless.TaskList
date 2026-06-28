@@ -126,7 +126,7 @@ module Program =
                         (sp.GetRequiredService<ITranscriber>())
                 let reconnectSeconds = match System.Int32.TryParse(cfg.["WhatsApp:Listen:ReconnectSeconds"]) with | true, n -> n | _ -> 10
                 let logger = sp.GetRequiredService<ILogger<WhatsAppListenerService>>()
-                new WhatsAppListenerService(listener, cursorStore, messages, buildListenerDeps, "whatsapp_new_message", reconnectSeconds, logger)) |> ignore
+                new WhatsAppListenerService(listener, cursorStore, messages, buildListenerDeps, "whatsapp_new_message", reconnectSeconds, kbOffset, logger)) |> ignore
 
         // Scheduled maintenance: register the in-app scheduler only when enabled.
         if cfg.["Scheduler:Enabled"] = "true" then

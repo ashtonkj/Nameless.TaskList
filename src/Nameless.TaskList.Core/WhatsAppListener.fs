@@ -42,8 +42,8 @@ module WhatsAppListener =
             if m.Timestamp > latest then latest <- m.Timestamp
         { Since = latest }
 
-    // The KB cursor is SAST wall-clock; a payload carries an offset timestamp.
-    let private toSast (ts: System.DateTimeOffset) = ts.ToOffset(System.TimeSpan.FromHours 2.0).DateTime
+    // The KB cursor is wall-clock in the configured timezone; a payload carries an offset timestamp.
+    let private toWallClock (offset: System.TimeSpan) (ts: System.DateTimeOffset) = ts.ToOffset(offset).DateTime
 
     /// One connection session: LISTEN first (so live notifications buffer), then catch up from the
     /// stored cursor, then process live payloads — advancing + persisting the cursor per message.
@@ -52,7 +52,8 @@ module WhatsAppListener =
     let runSession
         (listener: INotificationListener) (cursorStore: IListenCursorStore)
         (messages: IMessageSource) (processOne: string -> string -> unit)
-        (channel: string) (log: string -> unit) (token: System.Threading.CancellationToken) : unit =
+        (utcOffset: System.TimeSpan) (channel: string) (log: string -> unit)
+        (token: System.Threading.CancellationToken) : unit =
         listener.Subscribe channel
         cursorStore.Save(catchUp messages processOne (cursorStore.Load()))
         try
@@ -61,6 +62,6 @@ module WhatsAppListener =
                     match parse payload with
                     | Some p ->
                         processOne p.Id p.ChatJid
-                        cursorStore.Save { Since = toSast p.Timestamp }
+                        cursorStore.Save { Since = toWallClock utcOffset p.Timestamp }
                     | None -> log (sprintf "skipped unparseable NOTIFY payload: %s" payload)
         with :? System.OperationCanceledException -> ()
