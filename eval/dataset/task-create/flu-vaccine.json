@@ -4,8 +4,8 @@
   "tags": ["due-resolution", "verb-first-title"],
   "world": "ashford-family",
   "input": {
-    "message": "Don't forget to book Ethan's flu vaccine before next Friday.",
-    "intent": "Book Ethan's flu vaccine before next Friday",
+    "message": "Don't forget to book Ethan's flu vaccine by Friday next week.",
+    "intent": "Book Ethan's flu vaccine by Friday next week",
     "referenceDate": "2026-06-24",
     "contexts": ["medical"],
     "urgency": "medium"
