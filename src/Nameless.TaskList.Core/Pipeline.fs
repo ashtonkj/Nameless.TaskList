@@ -199,39 +199,6 @@ module Pipeline =
             deps.Vault.Write(path, text)
             path)
 
-    /// Shared shortlist-and-confirm core for the match-and-merge sites (notes, tasks, people).
-    /// `candidates` are (slug, embedText, displayLine). Embeds `queryText`, scores each candidate's
-    /// `embedText` by cosine, keeps those >= `floor`, takes the top `topK`, then asks the model
-    /// (via `systemPrompt` over `buildPayload (displayLines)`) to confirm a match and returns the
-    /// matched slug. Best-effort: empty candidates / embedder failure / parse error / no confirmed
-    /// match all yield None (the caller then creates/stubs as before).
-    let private shortlistAndConfirm
-        (deps: PipelineDeps) (queryText: string)
-        (candidates: (string * string * string) list)
-        (floor: float) (topK: int) (systemPrompt: string)
-        (buildPayload: string list -> string) : string option =
-        if List.isEmpty candidates then None
-        else
-            try
-                let q = deps.Embedder.Embed queryText
-                let shortlisted =
-                    candidates
-                    |> List.map (fun (slug, embedText, line) -> slug, line, Similarity.cosine q (deps.Embedder.Embed embedText))
-                    |> List.filter (fun (_, _, s) -> s >= floor)
-                    |> List.sortByDescending (fun (_, _, s) -> s)
-                    |> List.truncate topK
-                    |> List.map (fun (slug, line, _) -> slug, line)
-                match shortlisted with
-                | [] -> None
-                | sl ->
-                    let payload = buildPayload (sl |> List.map snd)
-                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] systemPrompt payload) with
-                    | Ok m when m.Match ->
-                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
-                        sl |> List.tryPick (fun (slug, _) -> if slug.ToLowerInvariant() = normalized then Some slug else None)
-                    | _ -> None
-            with _ -> None
-
     /// Append `name` as an alias on the person file at `existingPath`, unless `mentionSlug` is
     /// already known (the title or an existing alias). Best-effort; never throws.
     let private addPersonAlias (vault: IVault) (existingPath: string) (name: string) (mentionSlug: string) =
@@ -381,23 +348,7 @@ module Pipeline =
                 writeEntities deps taskSpec [ intent ] |> List.head
 
             let processTask (intent: string) : string =
-                // Re-scan pending tasks each call so a task written by an earlier intent in this
-                // same message is visible to the next (prevents duplicates).
-                let existingTasks =
-                    deps.Vault.ListFiles "tasks/pending"
-                    |> List.choose (fun path ->
-                        try
-                            let mf = MarkdownFile.FromString (deps.Vault.Read path)
-                            match mf.FrontMatter with
-                            | Some fm ->
-                                let t = Frontmatter.deserialize<Task> fm
-                                let slug = System.IO.Path.GetFileNameWithoutExtension(path)
-                                let summary = mf.Content.Trim()
-                                Some (slug, t.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug t.Title summary)
-                            | None -> None
-                        with _ -> None)
-                let buildPayload lines = sprintf "New task intent: %s\n\nCandidate tasks:\n%s" intent (String.concat "\n\n" lines)
-                match shortlistAndConfirm deps intent existingTasks deps.TaskSimilarityFloor deps.TaskTopK Prompts.taskMatchSystem buildPayload with
+                match Steps.matchTask deps.Chat deps.Embedder deps.Vault intent deps.TaskSimilarityFloor deps.TaskTopK with
                 | Some slug ->
                     let path = sprintf "tasks/pending/%s.md" slug
                     try
@@ -492,23 +443,7 @@ module Pipeline =
                 path
 
             let processNote (intent: string) : string =
-                // Re-scan the vault on every call so a note written by an earlier intent in this same
-                // message is visible when processing the next intent (prevents -2.md duplicates).
-                let existingNotes =
-                    deps.Vault.ListFiles "notes"
-                    |> List.choose (fun path ->
-                        try
-                            let mf = MarkdownFile.FromString (deps.Vault.Read path)
-                            match mf.FrontMatter with
-                            | Some fm ->
-                                let n = Frontmatter.deserialize<Note> fm
-                                let slug = System.IO.Path.GetFileNameWithoutExtension(path)
-                                let summary = mf.Content.Trim()
-                                Some (slug, n.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug n.Title summary)
-                            | None -> None
-                        with _ -> None)
-                let buildPayload lines = sprintf "New note intent: %s\n\nCandidate notes:\n%s" intent (String.concat "\n\n" lines)
-                match shortlistAndConfirm deps intent existingNotes deps.NoteSimilarityFloor deps.NoteTopK Prompts.noteMatchSystem buildPayload with
+                match Steps.matchNote deps.Chat deps.Embedder deps.Vault intent deps.NoteSimilarityFloor deps.NoteTopK with
                 | Some slug ->
                     let path = sprintf "notes/%s.md" slug
                     try
@@ -549,25 +484,7 @@ module Pipeline =
                     // Fuzzy second chance before creating a stub: shortlist existing people by
                     // embedding similarity and confirm same-person; on match, add this surface
                     // form as an alias instead of creating a duplicate stub.
-                    let existingPeople =
-                        deps.Vault.ListFilesRecursive "people"
-                        |> List.choose (fun path ->
-                            try
-                                let mf = MarkdownFile.FromString (deps.Vault.Read path)
-                                match mf.FrontMatter with
-                                | Some fm ->
-                                    let p = Frontmatter.deserialize<Person> fm
-                                    let aliases = if isNull p.Aliases then "" else String.concat " " (Array.toList p.Aliases)
-                                    let role = sprintf "%s %s" (if isNull p.Role then "" else p.Role) aliases
-                                    let slug = Naming.slug p.Title
-                                    Some (slug, p.Title + "\n" + role, sprintf "slug: %s\ntitle: %s\nrole: %s" slug p.Title role)
-                                | None -> None
-                            with _ -> None)
-                    let buildPayload lines =
-                        sprintf "New person mention: %s\nContext: %s\n\nCandidate people:\n%s"
-                            name (String.concat ", " classification.Contexts) (String.concat "\n\n" lines)
-                    let queryText = sprintf "%s\n%s" name (String.concat ", " classification.Contexts)
-                    match shortlistAndConfirm deps queryText existingPeople deps.PeopleSimilarityFloor deps.PeopleTopK Prompts.personMatchSystem buildPayload with
+                    match Steps.matchPerson deps.Chat deps.Embedder deps.Vault name classification.Contexts deps.PeopleSimilarityFloor deps.PeopleTopK with
                     | Some slug ->
                         // resolve the matched person's path from the index and add the alias
                         match resolvePerson index slug with

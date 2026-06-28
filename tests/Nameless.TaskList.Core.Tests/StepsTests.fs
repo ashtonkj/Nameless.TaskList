@@ -102,3 +102,29 @@ let ``Steps.createNote parses a note and stamps source`` () =
     Assert.Equal<string array>([| "medical" |], o.Record.Context)
     Assert.Equal("messages/m.md", o.Record.Source)            // linkage from input
     Assert.Contains("Policy 12345", o.Body)
+
+[<Fact>]
+let ``Steps.matchTask confirms a shortlisted candidate`` () =
+    let vault = FakeVault()
+    vault.Seed("tasks/pending/sign-up-ethan-for-swimming.md",
+               "---\ntype: Task\ntitle: Sign up Ethan for swimming\nstatus: pending\n---\nRegister Ethan.\n")
+    let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |])   // cosine 1.0 clears the floor
+    let chat = FakeChatClient([ Responses.final """{"match":true,"topic_slug":"sign-up-ethan-for-swimming","confidence":0.9,"match_reason":"same","new_topic_title":null}""" ])
+    match Steps.matchTask (chat :> IChatClient) (embedder :> IEmbedder) (vault :> IVault) "Register Ethan for swimming" 0.5 5 with
+    | Some slug -> Assert.Equal("sign-up-ethan-for-swimming", slug)
+    | None -> failwith "expected a match"
+
+[<Fact>]
+let ``Steps.matchNote returns None when the model declines`` () =
+    let vault = FakeVault()
+    vault.Seed("notes/medical-aid-details.md", "---\ntype: Note\ntitle: Medical aid details\n---\nPolicy.\n")
+    let embedder = FakeEmbedder(fun _ -> [| 1.0 |])
+    let chat = FakeChatClient([ Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"different","new_topic_title":null}""" ])
+    Assert.Equal(None, Steps.matchNote (chat :> IChatClient) (embedder :> IEmbedder) (vault :> IVault) "Buy a birthday gift" 0.5 5)
+
+[<Fact>]
+let ``Steps.matchTask returns None with no candidates`` () =
+    let vault = FakeVault()
+    let embedder = FakeEmbedder(fun _ -> [| 1.0 |])
+    let chat = FakeChatClient([])
+    Assert.Equal(None, Steps.matchTask (chat :> IChatClient) (embedder :> IEmbedder) (vault :> IVault) "anything" 0.5 5)

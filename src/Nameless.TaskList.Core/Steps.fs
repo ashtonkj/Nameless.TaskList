@@ -246,6 +246,98 @@ module Steps =
                   Source = input.MessagePath; LastVerified = "" }
               Body = input.Intent }
 
+    /// Shared shortlist-and-confirm core for the match sites (tasks, notes, people).
+    /// Embeds queryText, scores each candidate's embedText by cosine, keeps those >= floor,
+    /// takes the top topK, then asks the model (systemPrompt over buildPayload displayLines) to
+    /// confirm a match and returns the matched slug. Best-effort: empty candidates / embedder
+    /// failure / parse error / no confirmed match all yield None.
+    let shortlistAndConfirm
+        (chat: IChatClient) (embedder: IEmbedder) (queryText: string)
+        (candidates: (string * string * string) list)
+        (floor: float) (topK: int) (systemPrompt: string)
+        (buildPayload: string list -> string) : string option =
+        if List.isEmpty candidates then None
+        else
+            try
+                let q = embedder.Embed queryText
+                let shortlisted =
+                    candidates
+                    |> List.map (fun (slug, embedText, line) -> slug, line, Similarity.cosine q (embedder.Embed embedText))
+                    |> List.filter (fun (_, _, s) -> s >= floor)
+                    |> List.sortByDescending (fun (_, _, s) -> s)
+                    |> List.truncate topK
+                    |> List.map (fun (slug, line, _) -> slug, line)
+                match shortlisted with
+                | [] -> None
+                | sl ->
+                    let payload = buildPayload (sl |> List.map snd)
+                    match Prompts.parseTopicMatch (Agent.runConversation chat [] systemPrompt payload) with
+                    | Ok m when m.Match ->
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        sl |> List.tryPick (fun (slug, _) -> if slug.ToLowerInvariant() = normalized then Some slug else None)
+                    | _ -> None
+            with _ -> None
+
+    /// Decide whether `intent` matches an existing pending task (None = no confirmed match).
+    let matchTask (chat: IChatClient) (embedder: IEmbedder) (vault: IVault) (intent: string) (floor: float) (topK: int) : string option =
+        let existingTasks =
+            vault.ListFiles "tasks/pending"
+            |> List.choose (fun path ->
+                try
+                    let mf = MarkdownFile.FromString (vault.Read path)
+                    match mf.FrontMatter with
+                    | Some fm ->
+                        let t = Frontmatter.deserialize<Task> fm
+                        let slug = System.IO.Path.GetFileNameWithoutExtension(path)
+                        let summary = mf.Content.Trim()
+                        Some (slug, t.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug t.Title summary)
+                    | None -> None
+                with _ -> None)
+        let buildPayload lines = sprintf "New task intent: %s\n\nCandidate tasks:\n%s" intent (String.concat "\n\n" lines)
+        shortlistAndConfirm chat embedder intent existingTasks floor topK Prompts.taskMatchSystem buildPayload
+
+    /// Decide whether `intent` matches an existing note (None = no confirmed match).
+    let matchNote (chat: IChatClient) (embedder: IEmbedder) (vault: IVault) (intent: string) (floor: float) (topK: int) : string option =
+        let existingNotes =
+            vault.ListFiles "notes"
+            |> List.choose (fun path ->
+                try
+                    let mf = MarkdownFile.FromString (vault.Read path)
+                    match mf.FrontMatter with
+                    | Some fm ->
+                        let n = Frontmatter.deserialize<Note> fm
+                        let slug = System.IO.Path.GetFileNameWithoutExtension(path)
+                        let summary = mf.Content.Trim()
+                        Some (slug, n.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug n.Title summary)
+                    | None -> None
+                with _ -> None)
+        let buildPayload lines = sprintf "New note intent: %s\n\nCandidate notes:\n%s" intent (String.concat "\n\n" lines)
+        shortlistAndConfirm chat embedder intent existingNotes floor topK Prompts.noteMatchSystem buildPayload
+
+    /// Fuzzy person match (the second chance after exact alias-resolution fails in the pipeline).
+    /// Returns the title-slug of the matched person, or None. Candidate slug is Naming.slug of the
+    /// person's Title (matching the pipeline's resolvePerson key), NOT the filename.
+    let matchPerson (chat: IChatClient) (embedder: IEmbedder) (vault: IVault) (name: string) (contexts: string array) (floor: float) (topK: int) : string option =
+        let existingPeople =
+            vault.ListFilesRecursive "people"
+            |> List.choose (fun path ->
+                try
+                    let mf = MarkdownFile.FromString (vault.Read path)
+                    match mf.FrontMatter with
+                    | Some fm ->
+                        let p = Frontmatter.deserialize<Person> fm
+                        let aliases = if isNull p.Aliases then "" else String.concat " " (Array.toList p.Aliases)
+                        let role = sprintf "%s %s" (if isNull p.Role then "" else p.Role) aliases
+                        let slug = Naming.slug p.Title
+                        Some (slug, p.Title + "\n" + role, sprintf "slug: %s\ntitle: %s\nrole: %s" slug p.Title role)
+                    | None -> None
+                with _ -> None)
+        let buildPayload lines =
+            sprintf "New person mention: %s\nContext: %s\n\nCandidate people:\n%s"
+                name (String.concat ", " contexts) (String.concat "\n\n" lines)
+        let queryText = sprintf "%s\n%s" name (String.concat ", " contexts)
+        shortlistAndConfirm chat embedder queryText existingPeople floor topK Prompts.personMatchSystem buildPayload
+
     /// Generate a Commitment record+body from one intent. Mirrors the former Pipeline commitmentSpec.
     let createCommitment (chat: IChatClient) (input: GenInput) : EntityOutcome<Commitment> =
         let user =
