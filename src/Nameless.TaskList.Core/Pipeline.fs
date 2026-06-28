@@ -20,7 +20,8 @@ module Pipeline =
           PeopleTopK: int
           PeopleSimilarityFloor: float
           Vision: IVision
-          Transcriber: ITranscriber }
+          Transcriber: ITranscriber
+          UtcOffset: System.TimeSpan }
 
     type PipelineResult =
         | NotFound
@@ -29,8 +30,6 @@ module Pipeline =
         | Logged
         | Processed of topic: string * tasks: string list
         | LlmError of string
-
-    let private isoTimestamp (ts: System.DateTime) = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
 
     /// Automated estate gate-access codes ("... TAP exit 19678 valid for 1 exit till ...") are
     /// one-time machine messages — pure noise whichever direction they travel. The model insists
@@ -42,15 +41,6 @@ module Pipeline =
     let isAutomatedNoise (content: string) : bool =
         not (System.String.IsNullOrWhiteSpace content)
         && automatedNoiseRegexes |> List.exists (fun r -> r.IsMatch content)
-
-    /// The later of an existing ISO-8601 timestamp and a new message time. Topic
-    /// last_updated must never regress when an out-of-order (older) message is matched
-    /// into a topic, which would otherwise push last_updated below first_seen.
-    let private laterIso (existing: string) (ts: System.DateTime) : string =
-        let nu = isoTimestamp ts
-        match System.DateTimeOffset.TryParse existing, System.DateTimeOffset.TryParse nu with
-        | (true, prev), (true, cur) -> if prev > cur then existing else nu
-        | _ -> nu
 
     /// Wrap whole-word mentions of known people in a body as Obsidian wikilinks
     /// ([[path|Name]]) so the prose itself participates in the KB graph — OKF's core
@@ -218,6 +208,12 @@ module Pipeline =
         match deps.Messages.GetMessage(id, chatJid) with
         | None -> NotFound
         | Some msg ->
+            let isoTimestamp (ts: System.DateTime) = Time.iso deps.UtcOffset ts
+            let laterIso (existing: string) (ts: System.DateTime) : string =
+                let nu = isoTimestamp ts
+                match System.DateTimeOffset.TryParse existing, System.DateTimeOffset.TryParse nu with
+                | (true, prev), (true, cur) -> if prev > cur then existing else nu
+                | _ -> nu
             let channelSlug = Naming.slug msg.NormalizedChatName
             let messagePath = Naming.messagePathFor msg.Platform channelSlug msg.Timestamp msg.Id
 

@@ -61,6 +61,11 @@ module Program =
             let retain = match System.Int32.TryParse(cfg.["BulkJobs:Retain"]) with | true, v -> v | _ -> 20
             BulkJobs.BulkJobRegistry(store, retain)) |> ignore
 
+        let kbOffset =
+            match System.Double.TryParse(cfg.["Vault:UtcOffsetHours"]) with
+            | true, h -> System.TimeSpan.FromHours h
+            | _ -> System.TimeSpan.FromHours 2.0
+
         let buildDeps (messages: IMessageSource) (vault: IVault) (chat: IChatClient)
                       (embedder: IEmbedder) (vision: IVision) (transcriber: ITranscriber) : PipelineDeps =
             let topK = match System.Int32.TryParse(cfg.["TopicMatch:TopK"]) with | true, v -> v | _ -> 5
@@ -76,7 +81,7 @@ module Program =
               NoteTopK = noteTopK; NoteSimilarityFloor = noteFloor
               TaskTopK = taskTopK; TaskSimilarityFloor = taskFloor
               PeopleTopK = peopleTopK; PeopleSimilarityFloor = peopleFloor
-              Vision = vision; Transcriber = transcriber }
+              Vision = vision; Transcriber = transcriber; UtcOffset = kbOffset }
 
         // Email channel: register the IMAP poller only when enabled (off by default + in tests).
         if cfg.["Imap:Enabled"] = "true" then

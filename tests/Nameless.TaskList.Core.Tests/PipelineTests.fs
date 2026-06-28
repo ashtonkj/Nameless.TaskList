@@ -34,7 +34,8 @@ let deps (messages: IMessageSource) (vault: FakeVault) (chat: IChatClient) : Pip
       Embedder = FakeEmbedder(fun _ -> failwith "no embedder configured") :> IEmbedder
       TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
-      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber
+      UtcOffset = System.TimeSpan.FromHours 2.0 }
 
 [<Fact>]
 let ``returns NotFound when the message does not exist`` () =
@@ -295,7 +296,8 @@ let ``image-only message is described by vision and processed as that text`` () 
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
-              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) ->
         let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
@@ -313,7 +315,8 @@ let ``image-only message falls back to noise when vision fails`` () =
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
-              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     // vision throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
@@ -327,7 +330,8 @@ let ``vision-derived noise preserves the text`` () =
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
-              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | ProcessedNoise ->
         let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
@@ -347,7 +351,8 @@ let ``GetMediaBytes=None falls back to noise`` () =
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = vision
-              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
+              Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     // GetMediaBytes returns None -> vision is not called -> content stays empty -> classify (scripted noise) -> ProcessedNoise
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
@@ -367,7 +372,8 @@ let ``voice-note is transcribed and processed as that text`` () =
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-              Transcriber = transcriber }
+              Transcriber = transcriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) ->
         let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
@@ -385,7 +391,8 @@ let ``voice-note falls back to noise when transcription fails`` () =
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-              Transcriber = transcriber }
+              Transcriber = transcriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     // transcription throws -> content stays empty -> classify (scripted noise) -> ProcessedNoise, no crash
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
@@ -399,7 +406,8 @@ let ``transcribed noise preserves the text`` () =
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-              Transcriber = transcriber }
+              Transcriber = transcriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | ProcessedNoise ->
         let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
@@ -419,7 +427,8 @@ let ``audio GetMediaBytes=None falls back to noise`` () =
     let d = { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
               Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
               Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-              Transcriber = transcriber }
+              Transcriber = transcriber
+              UtcOffset = System.TimeSpan.FromHours 2.0 }
     Assert.Equal(ProcessedNoise, Pipeline.processMessage d "M1" "jid")
 
 // ── Hybrid embedding topic-match tests ─────────────────────────────────────
@@ -429,7 +438,8 @@ let private depsE (vault: FakeVault) (chat: IChatClient) (embedder: IEmbedder) (
       Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = embedder; TopK = topK; SimilarityFloor = floor; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision configured") :> IVision
-      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber }
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber configured") :> ITranscriber
+      UtcOffset = System.TimeSpan.FromHours 2.0 }
 
 // Seed one active topic with a known slug + understanding.
 let private seedTopic (v: FakeVault) (slug: string) (title: string) (understanding: string) =
@@ -647,7 +657,8 @@ let private personDeps (messages: IMessageSource) (vault: FakeVault) (chat: ICha
     { Messages = messages; Vault = vault :> IVault; Chat = chat; Model = "test-model"
       Embedder = FakeEmbedder(fun _ -> failwith "no embedder") :> IEmbedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5; TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+      UtcOffset = System.TimeSpan.FromHours 2.0 }
 
 let private seedPerson (vault: FakeVault) (path: string) (title: string) (context: string) (aliases: string list) =
     let aliasYaml = if List.isEmpty aliases then "[]" else "[" + (aliases |> List.map (fun a -> sprintf "\"%s\"" a) |> String.concat ", ") + "]"
@@ -805,7 +816,8 @@ let private noteDeps (messages: IMessageSource) (vault: FakeVault) (chat: IChatC
       TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.35
       TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
       Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+      Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+      UtcOffset = System.TimeSpan.FromHours 2.0 }
 
 [<Fact>]
 let ``a note matching an existing note merges into it instead of creating a new file`` () =
@@ -941,7 +953,8 @@ let ``two matching task intents in one message produce one updated task file`` (
           Embedder = embedder; TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
           TaskTopK = 5; TaskSimilarityFloor = 0.35; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
           Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+          UtcOffset = System.TimeSpan.FromHours 2.0 }
     let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"sign up","action_required":true,"urgency":"medium","people_mentioned":[],"entities":{"tasks":["Sign up for the club","Register for the club"],"events":[],"commitments":[],"notes":[]}}"""
     let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Club"}"""
     let taskCreate1 = Responses.final "---\ntype: Task\ntitle: Sign up for the club\nstatus: pending\npriority: medium\ndue: ''\ncontext:\n  - family\n---\nSign up for the club."
@@ -979,7 +992,8 @@ let ``two distinct task intents both create files (no false match)`` () =
           TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
           TaskTopK = 5; TaskSimilarityFloor = 0.35; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
           Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+          UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) ->
         let taskFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("tasks/")) |> List.ofSeq
@@ -1002,7 +1016,8 @@ let ``first task in an empty vault skips the embedder and matcher`` () =
           TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
           TaskTopK = 5; TaskSimilarityFloor = 0.35; PeopleTopK = 5; PeopleSimilarityFloor = 0.5
           Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+          UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) -> Assert.True(vault.Files.ContainsKey("tasks/pending/call-the-school.md"))
     | other -> failwithf "expected Processed, got %A" other
@@ -1027,7 +1042,8 @@ let ``a fuzzy-matched person mention adds an alias instead of a duplicate stub``
           TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
           TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.35
           Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+          UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) ->
         let peopleFiles = vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> List.ofSeq
@@ -1052,7 +1068,8 @@ let ``a different person still creates a separate stub`` () =
           TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
           TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.35
           Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+          UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) ->
         Assert.True(vault.Files.Keys |> Seq.exists (fun k -> k.StartsWith("people/") && k.Contains("trevor")))
@@ -1074,7 +1091,8 @@ let ``a mention that exactly resolves skips the fuzzy matcher`` () =
           TopK = 5; SimilarityFloor = 0.5; NoteTopK = 5; NoteSimilarityFloor = 0.5
           TaskTopK = 5; TaskSimilarityFloor = 0.5; PeopleTopK = 5; PeopleSimilarityFloor = 0.35
           Vision = FakeVision(fun _ -> failwith "no vision") :> IVision
-          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber }
+          Transcriber = FakeTranscriber(fun _ -> failwith "no transcriber") :> ITranscriber
+          UtcOffset = System.TimeSpan.FromHours 2.0 }
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(_, _) -> Assert.Equal(1, vault.Files.Keys |> Seq.filter (fun k -> k.StartsWith("people/")) |> Seq.length)
     | other -> failwithf "expected Processed, got %A" other
@@ -1158,3 +1176,13 @@ let ``createNewTopic does not overwrite a slug-colliding existing topic`` () =
     // existing file untouched; the colliding new topic lands at -2
     Assert.Contains("Existing.", vault.Files.["topics/active/birthday-party.md"])
     Assert.True(vault.Files.ContainsKey "topics/active/birthday-party-2.md")
+
+[<Fact>]
+let ``message timestamp uses the configured UtcOffset`` () =
+    let vault = FakeVault()
+    let noise = Responses.final """{"noise":true,"noise_reason":"ack","contexts":[],"intent":null,"action_required":false,"urgency":"none","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    let chat = FakeChatClient([ noise ])
+    let d = { deps (FakeMessages(Some(sampleMessage ()))) vault chat with UtcOffset = System.TimeSpan.FromHours 5.5 }
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    let msgKey = vault.Files.Keys |> Seq.find (fun k -> k.StartsWith("messages/"))
+    Assert.Contains("+05:30", vault.Files.[msgKey])
