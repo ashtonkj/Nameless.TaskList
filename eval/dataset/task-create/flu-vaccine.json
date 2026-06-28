@@ -1,0 +1,18 @@
+{
+  "id": "flu-vaccine",
+  "step": "task-create",
+  "tags": ["due-resolution", "verb-first-title"],
+  "world": "ashford-family",
+  "input": {
+    "message": "Don't forget to book Ethan's flu vaccine before next Friday.",
+    "intent": "Book Ethan's flu vaccine before next Friday",
+    "referenceDate": "2026-06-24",
+    "contexts": ["medical"],
+    "urgency": "medium"
+  },
+  "expected": {
+    "frontmatter": { "status": "pending", "priority": "medium", "context": ["medical"], "due": "2026-07-03" },
+    "titleMatches": "^(Book|Schedule|Call)\\b",
+    "bodyContains": ["flu vaccine"]
+  }
+}

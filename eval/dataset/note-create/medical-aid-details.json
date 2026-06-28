@@ -1,0 +1,18 @@
+{
+  "id": "medical-aid-details",
+  "step": "note-create",
+  "tags": ["note-as-label", "durable-fact"],
+  "world": "ashford-family",
+  "input": {
+    "message": "For reference, our medical aid membership number is MA-4471829.",
+    "intent": "Medical aid membership number MA-4471829",
+    "referenceDate": "2026-06-24",
+    "contexts": ["medical"],
+    "urgency": "low"
+  },
+  "expected": {
+    "frontmatter": { "context": ["medical"] },
+    "titleMatches": "^(?!.*MA-4471829).+$",
+    "bodyContains": ["MA-4471829"]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "picnic-all-day",
+  "step": "event-create",
+  "tags": ["all-day", "no-specific-time"],
+  "world": "ashford-family",
+  "input": {
+    "message": "There's a class picnic on the 30th — no set time yet.",
+    "intent": "Class picnic on the 30th",
+    "referenceDate": "2026-06-24",
+    "contexts": ["school"],
+    "urgency": "low"
+  },
+  "expected": {
+    "frontmatter": { "all_day": true },
+    "titleMatches": "[Pp]icnic"
+  }
+}

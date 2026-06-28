@@ -1,0 +1,17 @@
+{
+  "id": "dentist-appointment",
+  "step": "event-create",
+  "tags": ["sast-offset", "timed-event"],
+  "world": "ashford-family",
+  "input": {
+    "message": "Ethan has a dentist appointment on 22 June at 10am.",
+    "intent": "Ethan's dentist appointment on 22 June at 10am",
+    "referenceDate": "2026-06-18",
+    "contexts": ["medical"],
+    "urgency": "medium"
+  },
+  "expected": {
+    "frontmatter": { "all_day": false, "when": "2026-06-22T10:00:00+02:00", "context": ["medical"] },
+    "titleMatches": "[Dd]entist"
+  }
+}

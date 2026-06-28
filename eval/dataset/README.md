@@ -23,6 +23,13 @@ Hand-labelled cases for the prompt-eval CLI (`eval/Nameless.TaskList.Eval`). Run
   `*globs*` or substrings). Only the fields present are scored.
 - **topic-match** expected: `{ "decision": "match", "slug": "..." }` or
   `{ "decision": "create", "titleContains": ["..."] }`.
+- **task-create / event-create / commitment-create / note-create** `input`: `message`, `intent`,
+  `referenceDate`, `contexts` (array), `urgency`. `expected`: a `frontmatter` object of model-generated
+  fields to assert (`status`/`priority`/`context`/`due` for tasks; `all_day`/`when`/`location`/
+  `reminder_days_before`/`context` for events; `status`/`priority`/`due`/`task_assigned`/
+  `escalate_after_days`/`context` for commitments; `context`/`tags` for notes), plus optional
+  `titleMatches` (regex) and `bodyContains` (substrings). Linkage fields
+  (topic/source_message/tasks_linked/people) are never asserted.
 
 ## Anonymisation rule (privacy-first)
 
