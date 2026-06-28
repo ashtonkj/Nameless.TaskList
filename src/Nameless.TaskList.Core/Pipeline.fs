@@ -367,7 +367,7 @@ module Pipeline =
                 else a |> Array.map Naming.slug |> Array.filter (fun s -> s <> "") |> Array.distinct
             let peopleSlugs = slugifyPeople classification.PeopleMentioned
 
-            // --- Step: topic match (embedding shortlist + LLM confirm; fallback to tool-enabled) ---
+            // --- Helper: create a new topic file from a title (used by the topic-match decision below) ---
             let createNewTopic (title: string) =
                 let slug = Naming.slug title
                 let topicRecord : Topic =

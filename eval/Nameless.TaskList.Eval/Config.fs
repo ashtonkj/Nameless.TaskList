@@ -18,7 +18,7 @@ module Config =
         { Url: string; Model: string; EmbedModel: string; NumCtx: int; Temperature: float }
 
     let loadOllama () : OllamaConfig =
-        let doc = JsonDocument.Parse(File.ReadAllText hostSettings)
+        use doc = JsonDocument.Parse(File.ReadAllText hostSettings)
         let ollama = doc.RootElement.GetProperty("Ollama")
         let str (k: string) (d: string) =
             match ollama.TryGetProperty k with

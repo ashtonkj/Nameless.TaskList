@@ -58,3 +58,9 @@ let ``scoreTopic match requires correct slug`` () =
     Assert.Equal(1.0, (Scoring.scoreTopic case (Ok (Steps.MatchExisting "gate-fault"))).Score, 3)
     Assert.Equal(0.0, (Scoring.scoreTopic case (Ok (Steps.MatchExisting "other"))).Score, 3)
     Assert.Equal(0.0, (Scoring.scoreTopic case (Ok (Steps.CreateTopic "X"))).Score, 3)
+
+[<Fact>]
+let ``setF1 never exceeds 1.0 when expected patterns overlap one actual`` () =
+    // Two expected globs both match the single actual entry; precision must clamp to <= 1.0.
+    let s = Scoring.setF1 [ "*gate*"; "*fault*" ] [ "the gate fault" ]
+    Assert.True(s <= 1.0, sprintf "expected <= 1.0, got %f" s)

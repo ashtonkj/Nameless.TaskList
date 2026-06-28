@@ -30,7 +30,7 @@ module Dataset =
         | _ -> []
 
     let private parseCase (path: string) : Case =
-        let doc = JsonDocument.Parse(File.ReadAllText path)
+        use doc = JsonDocument.Parse(File.ReadAllText path)
         let root = doc.RootElement.Clone()   // Clone so it outlives the JsonDocument 'use' scope
         let input = match root.TryGetProperty "input" with | true, v -> v | _ -> root
         let expected = match root.TryGetProperty "expected" with | true, v -> v | _ -> root

@@ -40,7 +40,7 @@ module Scoring =
         | _, [] -> 0.0
         | _ ->
             let tp = expected |> List.filter (fun e -> actual |> List.exists (matches e)) |> List.length |> float
-            let precision = tp / float (List.length actual)
+            let precision = min 1.0 (tp / float (List.length actual))
             let recall = tp / float (List.length expected)
             if precision + recall = 0.0 then 0.0 else 2.0 * precision * recall / (precision + recall)
 

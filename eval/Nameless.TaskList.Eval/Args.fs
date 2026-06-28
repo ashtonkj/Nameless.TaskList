@@ -26,7 +26,7 @@ module Args =
             | "--baseline" :: v :: rest -> go { acc with Baseline = Some v } rest
             | "--ollama-url" :: v :: rest -> go { acc with OllamaUrl = Some v } rest
             | "--threshold" :: v :: rest ->
-                match System.Double.TryParse v with
+                match System.Double.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
                 | true, t -> go { acc with Threshold = t } rest
                 | _ -> Error(sprintf "invalid --threshold '%s'" v)
             | flag :: _ -> Error(sprintf "unknown or incomplete argument '%s'" flag)
