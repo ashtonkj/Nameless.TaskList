@@ -242,3 +242,91 @@ module Scoring =
                 scoreArrayField fm "tags" n.Tags fields)
             scoreTitleBody case n.Title o.Body fields
             finish case fields
+
+    /// Match decision: expected.decision "match" requires Ok (Some slug) with the right slug;
+    /// "nomatch" requires Ok None; Error scores 0.
+    let scoreMatch (case: Dataset.Case) (result: Result<string option, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok decision ->
+            let want = expStr case.Expected "decision" |> Option.map norm |> Option.defaultValue ""
+            let s =
+                match want, decision with
+                | "match", Some slug ->
+                    let wantSlug = expStr case.Expected "slug" |> Option.map norm |> Option.defaultValue ""
+                    if norm slug = wantSlug then 1.0 else 0.0
+                | "nomatch", None -> 1.0
+                | _ -> 0.0
+            { Id = case.Id; Step = case.Step; Tags = case.Tags; Score = s
+              Fields = [ { Field = "decision"; Score = s; Detail = sprintf "want=%s got=%A" want decision } ]
+              NoisePair = None; ParseError = None }
+
+    /// Note-update: body-only assertions (bodyContains; titleMatches not applicable).
+    let scoreNoteUpdate (case: Dataset.Case) (result: Result<string, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok body ->
+            let fields = ResizeArray<FieldScore>()
+            scoreTitleBody case "" body fields   // empty title -> titleMatches (if any) scores 0; cases use bodyContains
+            finish case fields
+
+    /// Person-stub: role (scalar); context/aliases/tags (arrays); title/body.
+    let scorePerson (case: Dataset.Case) (result: Result<Steps.EntityOutcome<Person>, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok o ->
+            let p = o.Record
+            let fields = ResizeArray<FieldScore>()
+            frontmatterObj case |> Option.iter (fun fm ->
+                scoreScalar fm "role" p.Role fields
+                scoreArrayField fm "context" p.Context fields
+                scoreArrayField fm "aliases" p.Aliases fields
+                scoreArrayField fm "tags" p.Tags fields)
+            scoreTitleBody case p.Title o.Body fields
+            finish case fields
+
+    let private symmetricRelations = set [ "sibling"; "partner"; "colleague"; "friend"; "other" ]
+
+    /// Canonicalise an edge to "relation|a|b": directed relations keep from->to; symmetric ones
+    /// use the sorted pair, so order does not matter.
+    let private edgeKey (fromSlug: string) (toSlug: string) (relation: string) : string =
+        let r = norm relation
+        let a, b = norm fromSlug, norm toSlug
+        if Set.contains r symmetricRelations then
+            let lo, hi = if a <= b then a, b else b, a
+            sprintf "%s|%s|%s" r lo hi
+        else sprintf "%s|%s|%s" r a b
+
+    /// Exact set F1 (no glob/substring) over canonical edge keys.
+    let private exactSetF1 (expected: string list) (actual: string list) : float =
+        match expected, actual with
+        | [], [] -> 1.0
+        | [], _ -> 0.0
+        | _, [] -> 0.0
+        | _ ->
+            let es, acts = Set.ofList expected, Set.ofList actual
+            let tp = Set.intersect es acts |> Set.count |> float
+            let precision = tp / float (Set.count acts)
+            let recall = tp / float (Set.count es)
+            if precision + recall = 0.0 then 0.0 else 2.0 * precision * recall / (precision + recall)
+
+    /// Relationship extraction: F1 over the canonical edge set (descriptor/confidence ignored).
+    let scoreRelationships (case: Dataset.Case) (result: Result<Prompts.RelationshipExtraction, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok ex ->
+            let actual =
+                (if isNull ex.Relationships then [||] else ex.Relationships)
+                |> Array.toList
+                |> List.map (fun e -> edgeKey (Naming.slug e.From) (Naming.slug e.To) e.Relation)
+            let expected =
+                match case.Expected.TryGetProperty "relationships" with
+                | true, v when v.ValueKind = JsonValueKind.Array ->
+                    [ for x in v.EnumerateArray() ->
+                        let g (k: string) = match x.TryGetProperty k with | true, s when s.ValueKind = JsonValueKind.String -> s.GetString() | _ -> ""
+                        edgeKey (Naming.slug (g "from")) (Naming.slug (g "to")) (g "relation") ]
+                | _ -> []
+            let s = exactSetF1 expected actual
+            { Id = case.Id; Step = case.Step; Tags = case.Tags; Score = s
+              Fields = [ { Field = "relationships"; Score = s; Detail = sprintf "exp=%A act=%A" expected actual } ]
+              NoisePair = None; ParseError = None }
