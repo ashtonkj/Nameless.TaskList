@@ -1,0 +1,16 @@
+{
+  "id": "raise-priority-and-due",
+  "step": "task-update",
+  "tags": ["merge-due", "merge-priority"],
+  "world": "ashford-family",
+  "input": {
+    "existingFile": "---\ntype: Task\ntitle: Sign up Ethan for swimming\nstatus: pending\npriority: medium\ndue: \"\"\ncontext: [family]\npeople: [ethan-ashford]\n---\nRegister Ethan for the term's swimming lessons.\n",
+    "intent": "Swimming sign-up closes this Friday — it is now urgent",
+    "message": "Reminder: swimming registration closes Friday 3 July, don't miss it!"
+  },
+  "expected": {
+    "frontmatter": { "status": "pending", "title": "Sign up Ethan for swimming" },
+    "titleMatches": "[Ss]wimming",
+    "bodyContains": ["swimming"]
+  }
+}

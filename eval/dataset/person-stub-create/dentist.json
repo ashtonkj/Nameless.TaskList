@@ -1,0 +1,12 @@
+{
+  "id": "dentist",
+  "step": "person-stub-create",
+  "tags": ["role-to-context", "stub-body"],
+  "world": "ashford-family",
+  "input": { "name": "Dr Brown", "contexts": ["medical"] },
+  "expected": {
+    "frontmatter": { "context": ["medical"] },
+    "titleMatches": "[Bb]rown",
+    "bodyContains": ["Stub"]
+  }
+}

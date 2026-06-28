@@ -1,0 +1,8 @@
+{
+  "id": "same-subject",
+  "step": "note-match",
+  "tags": ["same-record"],
+  "world": "ashford-family",
+  "input": { "intent": "Our medical aid membership number" },
+  "expected": { "decision": "match", "slug": "medical-aid-details" }
+}

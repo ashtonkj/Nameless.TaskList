@@ -1,0 +1,12 @@
+{
+  "id": "add-expiry",
+  "step": "note-update",
+  "tags": ["fold-in-fact"],
+  "world": "ashford-family",
+  "input": {
+    "existingBody": "## Medical aid\nMembership number MA-4471829.",
+    "intent": "Medical aid expires end of 2027",
+    "message": "Note the medical aid is valid until 31 December 2027."
+  },
+  "expected": { "bodyContains": ["MA-4471829", "2027"] }
+}

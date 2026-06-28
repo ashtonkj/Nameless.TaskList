@@ -31,6 +31,17 @@ Hand-labelled cases for the prompt-eval CLI (`eval/Nameless.TaskList.Eval`). Run
   `titleMatches` (regex) and `bodyContains` (substrings). Linkage fields
   (topic/source_message/tasks_linked/people) are never asserted.
 
+- **task-match / note-match / person-match** `input`: `intent` (task/note) or `name` + `contexts`
+  (person); the case's `world` seeds the candidate entities/people. `expected`:
+  `{"decision":"match","slug":"…"}` or `{"decision":"nomatch"}`. Needs the live embedder.
+- **task-update / note-update** `input`: `existingFile` (task) or `existingBody` (note) + `intent` +
+  `message`. `expected`: task = `frontmatter`/`titleMatches`/`bodyContains`; note = `bodyContains` (body-only).
+- **person-stub-create** `input`: `name` + `contexts`. `expected`: `frontmatter` (`role`/`context`/
+  `aliases`) + `titleMatches`/`bodyContains`.
+- **relationship-extract** `input`: `slugs` (co-mentioned resolved slugs) + `message`. `expected`:
+  `{"relationships":[{"from","to","relation"}, …]}`, scored as an edge-set F1 (directed relations keep
+  from→to; symmetric relations are order-insensitive; descriptor/confidence ignored).
+
 ## Anonymisation rule (privacy-first)
 
 Seed cases from real pipeline examples, but before committing apply ONE name/number/address map to
