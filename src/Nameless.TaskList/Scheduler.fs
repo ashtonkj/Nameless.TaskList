@@ -17,13 +17,13 @@ module MaintenanceTasks =
         { ResolvedArchiveAfterDays = (match Int32.TryParse(cfg.["Topics:ResolvedArchiveAfterDays"]) with | true, n -> n | _ -> 14)
           DormantArchiveAfterDays = (match Int32.TryParse(cfg.["Topics:DormantArchiveAfterDays"]) with | true, n -> n | _ -> 90) }
 
-    let reindex (cfg: IConfiguration) (vault: IVault) : Indexer.IndexSummary =
-        Indexer.regenerate vault (topicCfg cfg) DateTime.Now
-
     let kbOffset (cfg: IConfiguration) : System.TimeSpan =
         match System.Double.TryParse(cfg.["Vault:UtcOffsetHours"]) with
         | true, h -> System.TimeSpan.FromHours h
         | _ -> System.TimeSpan.FromHours 2.0
+
+    let reindex (cfg: IConfiguration) (vault: IVault) : Indexer.IndexSummary =
+        Indexer.regenerate vault (topicCfg cfg) (KnowledgeBase.Time.now (kbOffset cfg)).DateTime
 
     let digest (cfg: IConfiguration) (vault: IVault) (chat: IChatClient) (p: Digest.DigestParams) : Digest.DigestResult =
         let off = kbOffset cfg
