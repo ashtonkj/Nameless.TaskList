@@ -15,6 +15,7 @@
         <Compile Include="Prompts.fs" />
         <Compile Include="Relationships.fs" />
         <Compile Include="Similarity.fs" />
+        <Compile Include="Steps.fs" />
         <Compile Include="Pipeline.fs" />
         <Compile Include="WhatsAppListener.fs" />
         <Compile Include="Email.fs" />
