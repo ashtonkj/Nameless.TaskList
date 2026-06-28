@@ -32,6 +32,7 @@
         <Compile Include="JobStoreTests.fs" />
         <Compile Include="EvalWorldsTests.fs" />
         <Compile Include="EvalDatasetTests.fs" />
+        <Compile Include="EvalScoringTests.fs" />
     </ItemGroup>
 
     <ItemGroup>
