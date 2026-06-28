@@ -136,10 +136,7 @@ module Program =
 
         app.MapPost("/reindex", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
             fun (vault: IVault) ->
-                let topicCfg : Indexer.TopicSweepConfig =
-                    { ResolvedArchiveAfterDays = (match System.Int32.TryParse(cfg.["Topics:ResolvedArchiveAfterDays"]) with | true, n -> n | _ -> 14)
-                      DormantArchiveAfterDays = (match System.Int32.TryParse(cfg.["Topics:DormantArchiveAfterDays"]) with | true, n -> n | _ -> 90) }
-                try Indexer.regenerate vault topicCfg System.DateTime.Now |> ReindexHandler.toHttp
+                try MaintenanceTasks.reindex cfg vault |> ReindexHandler.toHttp
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         app.MapGet("/relationships", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
@@ -153,10 +150,7 @@ module Program =
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         let runDigest (vault: IVault) (chat: IChatClient) (p: Digest.DigestParams) : Microsoft.AspNetCore.Http.IResult =
-            try
-                let deps : Digest.DigestDeps =
-                    { Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]; Today = System.DateTime.Now }
-                Digest.generate deps p |> DigestHandler.toHttp
+            try MaintenanceTasks.digest cfg vault chat p |> DigestHandler.toHttp
             with ex -> Results.Json({| error = ex.Message |}, statusCode = 500)
 
         app.MapPost("/digest/daily", System.Func<IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(

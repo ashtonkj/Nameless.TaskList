@@ -8,6 +8,7 @@
         <Compile Include="ProcessMessage.fs"/>
         <Compile Include="ImapPoller.fs"/>
         <Compile Include="WhatsAppListener.fs"/>
+        <Compile Include="Scheduler.fs" />
         <Compile Include="Program.fs"/>
     </ItemGroup>
 
