@@ -12,6 +12,29 @@ module Runner =
         | true, v when v.ValueKind = JsonValueKind.String -> v.GetString()
         | _ -> d
 
+    let private inputStrArr (case: Dataset.Case) (name: string) : string array =
+        match case.Input.TryGetProperty name with
+        | true, v when v.ValueKind = JsonValueKind.Array ->
+            [| for x in v.EnumerateArray() do if x.ValueKind = JsonValueKind.String then yield x.GetString() |]
+        | _ -> [||]
+
+    /// Normalise a case referenceDate (a bare date or datetime) to a SAST (+02:00) noon ISO
+    /// timestamp string, the form the create prompts and the event date-inference expect.
+    let private isoRef (s: string) : string =
+        match System.DateTimeOffset.TryParse s with
+        | true, dto -> System.DateTimeOffset(dto.Year, dto.Month, dto.Day, 12, 0, 0, System.TimeSpan.FromHours 2.0).ToString("yyyy-MM-ddTHH:mm:sszzz")
+        | _ -> s
+
+    /// Build the generation input from a case, with neutral stub linkage (the eval scores only
+    /// model-generated fields, never linkage).
+    let private genInput (case: Dataset.Case) : Steps.GenInput =
+        { Intent = inputStr case "intent" (inputStr case "message" "")
+          Raw = inputStr case "message" ""
+          ReferenceDate = isoRef (inputStr case "referenceDate" "")
+          Contexts = inputStrArr case "contexts"
+          Urgency = inputStr case "urgency" "medium"
+          TopicPath = ""; MessagePath = ""; PeopleSlugs = [||]; TaskPaths = [] }
+
     /// Render an optional history array on the case input into the oldest->newest transcript the
     /// pipeline builds, reusing Prompts.renderHistory via lightweight ChatMessage stand-ins.
     let private historyText (case: Dataset.Case) : string =
@@ -48,6 +71,18 @@ module Runner =
             let intent = inputStr case "intent" (inputStr case "message" "")
             let result = Steps.matchTopic chat embedder vault topK floor intent
             Scoring.scoreTopic case result
+        | "task-create" ->
+            let r = try Ok (Steps.createTask chat (genInput case)) with ex -> Error ex.Message
+            Scoring.scoreTask case r
+        | "event-create" ->
+            let r = try Ok (Steps.createEvent chat (genInput case)) with ex -> Error ex.Message
+            Scoring.scoreEvent case r
+        | "commitment-create" ->
+            let r = try Ok (Steps.createCommitment chat (genInput case)) with ex -> Error ex.Message
+            Scoring.scoreCommitment case r
+        | "note-create" ->
+            let r = try Ok (Steps.createNote chat (genInput case)) with ex -> Error ex.Message
+            Scoring.scoreNote case r
         | other ->
             { Id = case.Id; Step = case.Step; Tags = case.Tags; Score = 0.0
               Fields = [ { Field = "step"; Score = 0.0; Detail = sprintf "unknown step '%s'" other } ]
