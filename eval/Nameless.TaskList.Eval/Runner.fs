@@ -25,6 +25,16 @@ module Runner =
         | true, dto -> System.DateTimeOffset(dto.Year, dto.Month, dto.Day, 12, 0, 0, System.TimeSpan.FromHours 2.0).ToString("yyyy-MM-ddTHH:mm:sszzz")
         | _ -> s
 
+    let private personGenInput (case: Dataset.Case) : Steps.GenInput =
+        { Intent = inputStr case "name" ""
+          Raw = ""; ReferenceDate = ""
+          Contexts = inputStrArr case "contexts"
+          Urgency = ""; TopicPath = ""; MessagePath = ""
+          PeopleSlugs = [||]; TaskPaths = [] }
+
+    let private inputSlugList (case: Dataset.Case) : string list =
+        inputStrArr case "slugs" |> Array.toList
+
     /// Build the generation input from a case, with neutral stub linkage (the eval scores only
     /// model-generated fields, never linkage).
     let private genInput (case: Dataset.Case) : Steps.GenInput =
@@ -83,6 +93,27 @@ module Runner =
         | "note-create" ->
             let r = try Ok (Steps.createNote chat (genInput case)) with ex -> Error ex.Message
             Scoring.scoreNote case r
+        | "task-match" ->
+            let r = try Ok (Steps.matchTask chat embedder vault (inputStr case "intent" "") floor topK) with ex -> Error ex.Message
+            Scoring.scoreMatch case r
+        | "note-match" ->
+            let r = try Ok (Steps.matchNote chat embedder vault (inputStr case "intent" "") floor topK) with ex -> Error ex.Message
+            Scoring.scoreMatch case r
+        | "person-match" ->
+            let r = try Ok (Steps.matchPerson chat embedder vault (inputStr case "name" "") (inputStrArr case "contexts") floor topK) with ex -> Error ex.Message
+            Scoring.scoreMatch case r
+        | "task-update" ->
+            let r = try Steps.updateTask chat (inputStr case "existingFile" "") (inputStr case "intent" "") (inputStr case "message" "") with ex -> Error ex.Message
+            Scoring.scoreTask case r
+        | "note-update" ->
+            let r = try Ok (Steps.updateNote chat (inputStr case "existingBody" "") (inputStr case "intent" "") (inputStr case "message" "")) with ex -> Error ex.Message
+            Scoring.scoreNoteUpdate case r
+        | "person-stub-create" ->
+            let r = try Ok (Steps.createPersonStub chat (personGenInput case)) with ex -> Error ex.Message
+            Scoring.scorePerson case r
+        | "relationship-extract" ->
+            let r = try Steps.extractRelationships chat (inputSlugList case) (inputStr case "message" "") with ex -> Error ex.Message
+            Scoring.scoreRelationships case r
         | other ->
             { Id = case.Id; Step = case.Step; Tags = case.Tags; Score = 0.0
               Fields = [ { Field = "step"; Score = 0.0; Detail = sprintf "unknown step '%s'" other } ]

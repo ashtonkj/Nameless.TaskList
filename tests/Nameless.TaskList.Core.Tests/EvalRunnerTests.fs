@@ -82,3 +82,30 @@ let ``runCase scores a note-create case end to end`` () =
                 """{"frontmatter":{"context":["medical"]},"bodyContains":["MA-4471829"]}"""
                 "---\ntype: Note\ntitle: Medical aid details\ncontext: [medical]\ntags: []\n---\nMembership MA-4471829.\n"
         Assert.Equal(1.0, r.Score, 3))
+
+[<Fact>]
+let ``runCase scores a relationship-extract case end to end`` () =
+    withDataset (fun root ->
+        let r =
+            runGen root "relationship-extract"
+                """{"slugs":["sarah-ashford","ethan-ashford"],"message":"Sarah picked up her son Ethan."}"""
+                """{"relationships":[{"from":"sarah-ashford","to":"ethan-ashford","relation":"parent-child"}]}"""
+                """{"relationships":[{"from":"sarah-ashford","to":"ethan-ashford","relation":"parent-child","descriptor":"mother and son","confidence":"high"}]}"""
+        Assert.Equal(1.0, r.Score, 3))
+
+[<Fact>]
+let ``runCase scores a task-match case against a seeded candidate`` () =
+    withDataset (fun root ->
+        // seed a candidate task into the _base world so matchTask has something to shortlist
+        let worldDir = Path.Combine(root, "_worlds", "_base", "tasks", "pending")
+        Directory.CreateDirectory worldDir |> ignore
+        File.WriteAllText(Path.Combine(worldDir, "sign-up-ethan-for-swimming.md"),
+                          "---\ntype: Task\ntitle: Sign up Ethan for swimming\nstatus: pending\n---\nRegister Ethan.\n")
+        Directory.CreateDirectory(Path.Combine(root, "task-match")) |> ignore
+        File.WriteAllText(Path.Combine(root, "task-match", "c.json"),
+            """{"id":"c","step":"task-match","world":"_base","input":{"intent":"Register Ethan for swimming"},"expected":{"decision":"match","slug":"sign-up-ethan-for-swimming"}}""")
+        let chat = FakeChatClient([ Responses.final """{"match":true,"topic_slug":"sign-up-ethan-for-swimming","confidence":0.9,"match_reason":"same","new_topic_title":null}""" ])
+        let embedder = FakeEmbedder(fun _ -> [| 1.0; 0.0 |])
+        let case = Dataset.load root [ "task-match" ] |> List.head
+        let r = Runner.runCase (chat :> IChatClient) (embedder :> IEmbedder) root 5 0.5 case
+        Assert.Equal(1.0, r.Score, 3))
