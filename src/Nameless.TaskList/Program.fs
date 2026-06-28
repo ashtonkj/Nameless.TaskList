@@ -21,10 +21,7 @@ module Program =
         let builder = WebApplication.CreateBuilder(args)
         let cfg = builder.Configuration
 
-        let kbOffset =
-            match System.Double.TryParse(cfg.["Vault:UtcOffsetHours"]) with
-            | true, h -> System.TimeSpan.FromHours h
-            | _ -> System.TimeSpan.FromHours 2.0
+        let kbOffset = MaintenanceTasks.kbOffset cfg
 
         // Adapters as singletons behind their ports.
         builder.Services.AddSingleton<IVault>(fun _ ->
