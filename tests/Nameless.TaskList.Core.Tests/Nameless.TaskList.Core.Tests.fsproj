@@ -36,6 +36,7 @@
         <Compile Include="EvalReportTests.fs" />
         <Compile Include="EvalRunnerTests.fs" />
         <Compile Include="EvalArgsTests.fs" />
+        <Compile Include="EvalDatasetIntegrityTests.fs" />
     </ItemGroup>
 
     <ItemGroup>

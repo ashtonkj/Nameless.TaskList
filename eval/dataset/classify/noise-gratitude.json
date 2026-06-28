@@ -1,0 +1,8 @@
+{
+  "id": "noise-gratitude",
+  "step": "classify",
+  "tags": ["noise-taxonomy"],
+  "world": "_base",
+  "input": { "message": "Thanks so much for your help yesterday, you're a lifesaver!", "referenceDate": "2026-06-24" },
+  "expected": { "noise": true, "tasks": [], "events": [], "people": [] }
+}

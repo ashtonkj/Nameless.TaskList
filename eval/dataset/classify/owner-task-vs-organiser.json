@@ -1,0 +1,8 @@
+{
+  "id": "owner-task-vs-organiser",
+  "step": "classify",
+  "tags": ["owner-task-discipline", "event-not-task"],
+  "world": "ashford-family",
+  "input": { "message": "School picnic this Friday at 10am — remember to bring a named teddy for each child and label their water bottles.", "referenceDate": "2026-06-24" },
+  "expected": { "noise": false, "contexts": ["school"], "tasks": [], "events": ["*picnic*"] }
+}
