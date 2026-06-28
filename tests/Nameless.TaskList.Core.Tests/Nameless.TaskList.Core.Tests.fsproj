@@ -40,6 +40,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Nameless.TaskList.Core\Nameless.TaskList.Core.fsproj" />
+        <ProjectReference Include="..\..\eval\Nameless.TaskList.Eval\Nameless.TaskList.Eval.fsproj" />
     </ItemGroup>
 
 </Project>
