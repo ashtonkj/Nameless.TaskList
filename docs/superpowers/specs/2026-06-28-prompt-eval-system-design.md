@@ -48,31 +48,50 @@ Extraction is **incremental**: each phase extracts only the step functions it wi
 no phase is a big-bang refactor. Phase 1 extracts `Steps.classify` and `Steps.matchTopic`. Each
 extraction is behaviour-preserving for `processMessage` (verified by the existing pipeline tests).
 
-## 4. Reproducible tool context
+## 4. Reproducible tool context — vault-fixture "worlds"
 
-Several steps call read-only vault tools (`get_contexts`, `get_topics`, `get_people`,
-`get_relationships`) mid-loop. To make runs deterministic without a live vault, each gold case carries
-a `fixture` block (contexts, candidate topics, people). The eval builds an **in-memory fake vault**
-seeded from that fixture (the same shape as the test `FakeVault`), so every tool call returns fixed
-context. A case that needs the model to *match an existing topic* lists that topic in its fixture.
+Several steps expose read-only vault tools mid-loop (`get_contexts`, `get_people`, `get_topics`,
+`get_topic`, `get_relationships`). These tools read **real markdown files**: `get_contexts`/`get_people`
+concatenate raw file contents under `contexts/`/`people/`, and `get_topics`/`get_relationships` parse
+frontmatter. So tool context cannot be loose JSON slugs — if it were, the model's tool-driven reasoning
+would diverge from production, and a case whose message names "Sarah" while `get_people` returns
+real or unrelated names would be internally inconsistent.
+
+Therefore each case references a **vault-fixture world**: a directory of actual markdown files under
+`eval/dataset/_worlds/<world>/` mirroring the relevant vault subtree (`contexts/`, `people/…`,
+`topics/active/`, `relationships/`). The eval seeds a `FakeVault` from that world and backs the real
+`Tools.*` with it, so every tool call returns valid, fixed context in exactly the production format.
+
+**Anonymisation must be consistent across the message and its world.** When a real case is scrubbed,
+the *same* name/number/address map is applied to the message text **and** to the world's files, so a
+person the message mentions exists as an anonymised `people/…` file the tools will surface, and the
+case's `expected` values use the same fictional slugs. This consistency is the point the fixture must
+enforce — it is what makes a tool-using run faithful.
+
+**Sharing & DRY.** A `_worlds/_base/` world holds the generic, non-PII context-definition files
+(`contexts/*.md`, copied from a real seed) plus any standing identities (e.g. the KB owner). The eval
+**always seeds `_base/` first, then overlays the case's named world** (named-world files win on path
+collision). Cases that share an anonymised "world" (same people/topics) name the same world, so the
+scrubbing is authored once and reused. A case needing the model to *match an existing topic* simply
+includes that topic's file in its world's `topics/active/`.
 
 ## 5. Dataset
 
 **Location & format.** One JSON file per case under `eval/dataset/<step>/<id>.json`. JSON, to match the
 codebase's System.Text.Json convention. Loaded by globbing the dataset dir; the `step` field selects the
-scorer. Example (classify):
+scorer; `world` names the vault-fixture world (§4) seeded for the case's tool calls (`_base` is always
+overlaid under it). Example (classify):
 
 ```json
 {
   "id": "classify-school-picnic-notice",
   "step": "classify",
   "tags": ["event-not-task", "owner-task-discipline"],
+  "world": "ashford-family",
   "input": {
     "message": "Reminder: bring a named teddy for Friday's class picnic at 10am.",
     "referenceDate": "2026-06-24",
-    "history": [],
-    "fixture": { "contexts": ["family","school","medical","finance","professional","personal-kb"],
-                 "topics": [], "people": [] }
+    "history": []
   },
   "expected": {
     "noise": false,
@@ -84,13 +103,17 @@ scorer. Example (classify):
 }
 ```
 
+A `world` of `"_base"` (or omitted → defaults to `_base`) means only the shared base world: generic
+contexts and standing identities, no case-specific people/topics.
+
 **Generative cases** (Phase 2) carry **salient-field assertions** rather than exact markdown bytes:
 
 ```json
 {
   "id": "task-create-flu-vaccine",
   "step": "task-create",
-  "input": { "intent": "Book Ethan's flu vaccine before next Friday", "referenceDate": "2026-06-24", "raw": "...", "fixture": { ... } },
+  "world": "ashford-family",
+  "input": { "intent": "Book Ethan's flu vaccine before next Friday", "referenceDate": "2026-06-24", "raw": "..." },
   "expected": {
     "frontmatter": { "status": "pending", "priority": "medium", "context": ["medical"], "due": "2026-07-03" },
     "titleMatches": "^(Book|Schedule|Call)\\b",
@@ -102,8 +125,9 @@ scorer. Example (classify):
 **Provenance & privacy.** Gold inputs are seeded from **anonymised real** pipeline cases — prioritising
 the ones that drove past tuning (owner-vs-other task discipline, event-not-incident, person discipline,
 the noise taxonomy, SAST date resolution). Names / numbers / addresses are scrubbed to fictional
-stand-ins **before** commit. No real PII enters the repo. A short `eval/dataset/README.md` documents the
-scrubbing rule and the case-authoring format.
+stand-ins **before** commit, applying the *same* map to the message and to the case's world files
+(§4) so the two stay consistent. No real PII enters the repo. A short `eval/dataset/README.md` documents
+the scrubbing rule, the world layout, and the case-authoring format.
 
 ## 6. Scoring
 
@@ -143,7 +167,7 @@ dotnet run --project eval/Nameless.TaskList.Eval -- \
   --threshold 0.85               # default 0.85 overall; non-zero exit if below
 ```
 Loads cases, groups by step, runs each through its `Pipeline.Steps` function against a real
-`OllamaChatClient` (chosen model) + the case's fake vault, scores, aggregates. Ollama-unreachable or a
+`OllamaChatClient` (chosen model) + the case's seeded world vault (§4), scores, aggregates. Ollama-unreachable or a
 dataset-load failure → a clear non-zero exit with a message, not a stack trace.
 
 **Report.** Markdown scorecard to stdout and `--report`, plus a machine-readable JSON sibling
@@ -168,7 +192,7 @@ One framework; coverage grows incrementally. Each phase extracts its step functi
 (shrinking the monolith) and adds gold cases.
 
 1. **Phase 1 — framework + classify + topic-match** *(this spec's deliverable)*: the project, dataset
-   loader, scorer registry, CLI, report, baseline diff, fake-vault fixtures; extract `Steps.classify` /
+   loader, scorer registry, CLI, report, baseline diff, world-seeded fake vault; extract `Steps.classify` /
    `Steps.matchTopic`; seed the gold set from anonymised real cases covering the tuning rules.
 2. **Phase 2 — generative creators**: `Steps.createTask/createEvent/createCommitment/createNote/
    createPersonStub`; the field-assertion scorer; gold cases.
