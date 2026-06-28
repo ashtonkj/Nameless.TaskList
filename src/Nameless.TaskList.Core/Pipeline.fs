@@ -520,11 +520,7 @@ module Pipeline =
                         match resolve s with Some _ -> Some s | None -> None)
                     |> List.distinct
                 if List.length resolved >= 2 then
-                    let user =
-                        sprintf "People mentioned (use these exact slugs for from/to): %s\nMessage: %s"
-                            (String.concat ", " resolved) msg.Content
-                    match Prompts.parseRelationships
-                              (Agent.runConversation deps.Chat [] Prompts.relationshipExtractSystem user) with
+                    match Steps.extractRelationships deps.Chat resolved msg.Content with
                     | Ok extraction when not (isNull extraction.Relationships) ->
                         for edge in extraction.Relationships do
                             match Relationships.buildEdge resolve messagePath edge with

@@ -388,6 +388,15 @@ module Steps =
                   Channel = ""; Phone = ""; Email = ""; Tags = [||]; Aliases = [||] }
               Body = sprintf "%s\n\n⚠ Stub — details to be completed." input.Intent }
 
+    /// Run the relationship-extraction prompt over the resolved co-mentioned slugs + the message,
+    /// returning the parsed edges. Mirrors the former Pipeline call; the pipeline still does
+    /// buildEdge/confidence-filter/reconcile/write.
+    let extractRelationships (chat: IChatClient) (resolvedSlugs: string list) (messageContent: string) : Result<Prompts.RelationshipExtraction, string> =
+        let user =
+            sprintf "People mentioned (use these exact slugs for from/to): %s\nMessage: %s"
+                (String.concat ", " resolvedSlugs) messageContent
+        Prompts.parseRelationships (Agent.runConversation chat [] Prompts.relationshipExtractSystem user)
+
     /// Generate a Commitment record+body from one intent. Mirrors the former Pipeline commitmentSpec.
     let createCommitment (chat: IChatClient) (input: GenInput) : EntityOutcome<Commitment> =
         let user =

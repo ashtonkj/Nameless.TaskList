@@ -170,3 +170,12 @@ let ``Steps.createPersonStub falls back to a single role-derived context`` () =
     Assert.Equal("Coach Brian", o.Record.Title)
     Assert.Equal<string array>([| "school" |], o.Record.Context)   // first known context
     Assert.Contains("Stub", o.Body)
+
+[<Fact>]
+let ``Steps.extractRelationships parses edges`` () =
+    let chat = FakeChatClient([ Responses.final """{"relationships":[{"from":"sarah-ashford","to":"ethan-ashford","relation":"parent-child","descriptor":"mother and son","confidence":"high"}]}""" ])
+    match Steps.extractRelationships (chat :> IChatClient) [ "sarah-ashford"; "ethan-ashford" ] "Sarah picked up Ethan" with
+    | Ok ex ->
+        Assert.Equal(1, ex.Relationships.Length)
+        Assert.Equal("parent-child", ex.Relationships.[0].Relation)
+    | Error e -> failwithf "expected Ok, got Error %s" e
