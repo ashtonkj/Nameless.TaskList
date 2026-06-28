@@ -20,6 +20,48 @@ module Steps =
         else people |> Array.filter (fun p ->
             not (endearments.Contains((if isNull p then "" else p).Trim().ToLowerInvariant())))
 
+    /// Strip surrounding code fences / leading prose from a model reply.
+    let stripFences (text: string) =
+        let trimmed = (if isNull text then "" else text).Trim()
+        let idx = trimmed.IndexOf("```")
+        if idx >= 0 then
+            let afterFirst = trimmed.IndexOf('\n', idx)
+            let lastFence = trimmed.LastIndexOf("```")
+            if afterFirst > 0 && lastFence > afterFirst then trimmed.[afterFirst..lastFence - 1].Trim()
+            else trimmed
+        else trimmed
+
+    /// Map an urgency string to a priority value.
+    let urgencyToPriority (u: string) =
+        match (if isNull u then "" else u).ToLowerInvariant() with
+        | "critical" -> "critical"
+        | "high" -> "high"
+        | "low" -> "low"
+        | _ -> "medium"
+
+    /// Canonicalize a people array to distinct non-empty slugs (matching person filenames).
+    let slugifyPeople (a: string array) =
+        if isNull a then [||]
+        else a |> Array.map Naming.slug |> Array.filter (fun s -> s <> "") |> Array.distinct
+
+    /// The outcome of a generation step: the parsed record plus its markdown body.
+    type EntityOutcome<'T> = { Record: 'T; Body: string }
+
+    /// Inputs a generative creator needs: the model-facing fields (intent, raw message,
+    /// pre-formatted reference timestamp, contexts, urgency) plus the pipeline-owned linkage
+    /// the creator stamps onto the record (topic/message paths, people slugs, linked task paths).
+    /// The eval passes neutral stubs for the linkage fields.
+    type GenInput =
+        { Intent: string
+          Raw: string
+          ReferenceDate: string
+          Contexts: string array
+          Urgency: string
+          TopicPath: string
+          MessagePath: string
+          PeopleSlugs: string array
+          TaskPaths: string list }
+
     /// A classify failure carries both the parse error and the raw model reply, so the
     /// pipeline can keep its exact [classify-error] log line (id/chat/reason/raw).
     type ClassifyError = { Message: string; Raw: string }
@@ -123,3 +165,107 @@ module Steps =
             | Ok m ->
                 if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (MatchExisting m.TopicSlug)
                 else Ok (CreateTopic m.NewTopicTitle)
+
+    /// Generate a Task record+body from one intent. Mirrors the former Pipeline taskSpec
+    /// (prompt + user message + parse/fallback). Linkage (Topic/SourceMessage/People) is set
+    /// from `input`; the model only supplies title/description/status/priority/due/context/body.
+    let createTask (chat: IChatClient) (input: GenInput) : EntityOutcome<Task> =
+        let user =
+            sprintf "Message intent: %s\nRaw message: %s\nMessage reference date (resolve relative dates like \"tomorrow\" against this): %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
+                input.Intent input.Raw input.ReferenceDate (String.concat ", " input.Contexts) input.Urgency input.MessagePath
+        let stripped = stripFences (Agent.runConversation chat [] Prompts.taskCreateSystem user)
+        try
+            let parsed = MarkdownFile.FromString stripped
+            match parsed.FrontMatter with
+            | Some fm ->
+                let t = Frontmatter.deserialize<Task> fm
+                if not (System.String.IsNullOrWhiteSpace t.Title) then
+                    { Record = { t with Type = "Task"; Description = (if System.String.IsNullOrWhiteSpace t.Description then input.Intent else t.Description); Topic = input.TopicPath; SourceMessage = input.MessagePath; People = slugifyPeople t.People }
+                      Body = parsed.Content }
+                else raise (System.Exception("empty title"))
+            | None -> raise (System.Exception("no frontmatter"))
+        with _ ->
+            let fb : Task =
+                { Type = "Task"; Title = input.Intent; Description = input.Intent; Status = "pending"
+                  Priority = urgencyToPriority input.Urgency; Due = ""
+                  Context = input.Contexts; People = input.PeopleSlugs
+                  Topic = input.TopicPath; SourceMessage = input.MessagePath }
+            { Record = fb; Body = input.Intent }
+
+    /// Generate an Event record+body from one intent. Mirrors the former Pipeline eventSpec,
+    /// including the ensureDated path: an unparseable `when` falls back to the reference date
+    /// and appends the "date inferred" body flag.
+    let createEvent (chat: IChatClient) (input: GenInput) : EntityOutcome<Event> =
+        let user =
+            sprintf "Event intent: %s\nRaw message: %s\nMessage reference date: %s\nContext(s): %s\nSource message file: %s"
+                input.Intent input.Raw input.ReferenceDate (String.concat ", " input.Contexts) input.MessagePath
+        let stripped = stripFences (Agent.runConversation chat [] Prompts.eventCreateSystem user)
+        let flag = "\n\n_Date inferred from message; please confirm._"
+        let ensureDated (e: Event) (body: string) =
+            match System.DateTimeOffset.TryParse(e.When) with
+            | true, _ -> { Record = e; Body = body }
+            | _ -> { Record = { e with When = input.ReferenceDate }; Body = body + flag }
+        try
+            let parsed = MarkdownFile.FromString stripped
+            match parsed.FrontMatter with
+            | Some fm ->
+                let e = Frontmatter.deserialize<Event> fm
+                if not (System.String.IsNullOrWhiteSpace e.Title) then
+                    ensureDated { e with Type = "Event"; Description = (if System.String.IsNullOrWhiteSpace e.Description then input.Intent else e.Description); Topic = input.TopicPath; TasksLinked = Array.ofList input.TaskPaths; People = slugifyPeople e.People } parsed.Content
+                else raise (System.Exception("empty title"))
+            | None -> raise (System.Exception("no frontmatter"))
+        with _ ->
+            let fb : Event =
+                { Type = "Event"; Title = input.Intent; Description = input.Intent; When = input.ReferenceDate; AllDay = true
+                  Context = input.Contexts; Location = ""; People = input.PeopleSlugs
+                  Topic = input.TopicPath; TasksLinked = Array.ofList input.TaskPaths; ReminderDaysBefore = 3 }
+            { Record = fb; Body = input.Intent + flag }
+
+    /// Generate a Note record+body from one intent. Mirrors the former Pipeline createNewNote +
+    /// interpretNote. Source/PeopleLinked are pipeline-owned (set from input); the model supplies
+    /// title/description/context/tags/body.
+    let createNote (chat: IChatClient) (input: GenInput) : EntityOutcome<Note> =
+        let user =
+            sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
+                input.Intent input.Raw (String.concat ", " input.Contexts) input.MessagePath
+        let stripped = stripFences (Agent.runConversation chat [] Prompts.noteCreateSystem user)
+        try
+            let parsed = MarkdownFile.FromString stripped
+            match parsed.FrontMatter with
+            | Some fm ->
+                let n = Frontmatter.deserialize<Note> fm
+                if not (System.String.IsNullOrWhiteSpace n.Title) then
+                    { Record = { n with Type = "Note"; Description = (if System.String.IsNullOrWhiteSpace n.Description then input.Intent else n.Description); Source = input.MessagePath; PeopleLinked = input.PeopleSlugs }
+                      Body = parsed.Content }
+                else raise (System.Exception("empty title"))
+            | None -> raise (System.Exception("no frontmatter"))
+        with _ ->
+            { Record =
+                { Type = "Note"; Title = input.Intent; Description = input.Intent; Context = input.Contexts
+                  PeopleLinked = input.PeopleSlugs; Tags = [||]
+                  Source = input.MessagePath; LastVerified = "" }
+              Body = input.Intent }
+
+    /// Generate a Commitment record+body from one intent. Mirrors the former Pipeline commitmentSpec.
+    let createCommitment (chat: IChatClient) (input: GenInput) : EntityOutcome<Commitment> =
+        let user =
+            sprintf "Commitment intent: %s\nRaw message: %s\nReference date (resolve relative dates against this): %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
+                input.Intent input.Raw input.ReferenceDate (String.concat ", " input.Contexts) input.Urgency input.MessagePath
+        let stripped = stripFences (Agent.runConversation chat [] Prompts.commitmentCreateSystem user)
+        try
+            let parsed = MarkdownFile.FromString stripped
+            match parsed.FrontMatter with
+            | Some fm ->
+                let c = Frontmatter.deserialize<Commitment> fm
+                if not (System.String.IsNullOrWhiteSpace c.Title) then
+                    { Record = { c with Type = "Commitment"; Description = (if System.String.IsNullOrWhiteSpace c.Description then input.Intent else c.Description); Topic = input.TopicPath; SourceMessage = input.MessagePath }
+                      Body = parsed.Content }
+                else raise (System.Exception("empty title"))
+            | None -> raise (System.Exception("no frontmatter"))
+        with _ ->
+            let fb : Commitment =
+                { Type = "Commitment"; Title = input.Intent; Description = input.Intent; Status = "unresolved"
+                  Priority = urgencyToPriority input.Urgency; Due = ""
+                  Context = input.Contexts; Topic = input.TopicPath
+                  TaskAssigned = ""; EscalateAfterDays = 7; SourceMessage = input.MessagePath }
+            { Record = fb; Body = input.Intent }

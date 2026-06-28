@@ -1,0 +1,17 @@
+{
+  "id": "return-signed-form",
+  "step": "commitment-create",
+  "tags": ["status-unresolved", "due-resolution"],
+  "world": "ashford-family",
+  "input": {
+    "message": "I owe the school the signed consent form by the 1st of July.",
+    "intent": "Return the signed consent form to the school by 1 July",
+    "referenceDate": "2026-06-24",
+    "contexts": ["school"],
+    "urgency": "medium"
+  },
+  "expected": {
+    "frontmatter": { "status": "unresolved", "due": "2026-07-01", "context": ["school"] },
+    "bodyContains": ["form"]
+  }
+}

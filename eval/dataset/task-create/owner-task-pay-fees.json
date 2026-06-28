@@ -1,0 +1,18 @@
+{
+  "id": "owner-task-pay-fees",
+  "step": "task-create",
+  "tags": ["verb-first-title", "no-date"],
+  "world": "ashford-family",
+  "input": {
+    "message": "The term 3 school fees still need paying.",
+    "intent": "Pay the term 3 school fees",
+    "referenceDate": "2026-06-24",
+    "contexts": ["finance", "school"],
+    "urgency": "high"
+  },
+  "expected": {
+    "frontmatter": { "status": "pending", "priority": "high" },
+    "titleMatches": "^Pay\\b",
+    "bodyContains": ["fees"]
+  }
+}

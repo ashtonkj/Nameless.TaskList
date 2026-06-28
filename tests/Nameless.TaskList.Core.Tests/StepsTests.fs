@@ -51,3 +51,54 @@ let ``Steps.matchTopic creates a new topic when no topic files exist`` () =
     match Steps.matchTopic (chat :> IChatClient) (embedder :> IEmbedder) (vault :> IVault) 5 0.5 "school fees are due" with
     | Ok (Steps.CreateTopic title) -> Assert.Equal("School fees 2026", title)
     | other -> failwithf "expected CreateTopic, got %A" other
+
+let private genInput intent : Steps.GenInput =
+    { Intent = intent; Raw = intent; ReferenceDate = "2026-06-24T12:00:00+02:00"
+      Contexts = [| "medical" |]; Urgency = "medium"
+      TopicPath = "topics/active/t.md"; MessagePath = "messages/m.md"
+      PeopleSlugs = [||]; TaskPaths = [] }
+
+[<Fact>]
+let ``Steps.createTask parses a model task and stamps linkage`` () =
+    let md = "---\ntype: Task\ntitle: Book flu vaccine\nstatus: pending\npriority: medium\ndue: 2026-07-03\ncontext: [medical]\npeople: []\n---\nBook the jab.\n"
+    let chat = FakeChatClient([ Responses.final md ])
+    let o = Steps.createTask (chat :> IChatClient) (genInput "Book flu vaccine")
+    Assert.Equal("Book flu vaccine", o.Record.Title)
+    Assert.Equal("pending", o.Record.Status)
+    Assert.Equal("2026-07-03", o.Record.Due)
+    Assert.Equal("topics/active/t.md", o.Record.Topic)        // linkage stamped from input
+    Assert.Equal("messages/m.md", o.Record.SourceMessage)
+
+[<Fact>]
+let ``Steps.createTask falls back on unparseable reply`` () =
+    let chat = FakeChatClient([ Responses.final "sorry, I cannot do that" ])
+    let o = Steps.createTask (chat :> IChatClient) (genInput "Pay the fees")
+    Assert.Equal("Pay the fees", o.Record.Title)              // fallback = intent
+    Assert.Equal("pending", o.Record.Status)
+    Assert.Equal("medium", o.Record.Priority)
+
+[<Fact>]
+let ``Steps.createEvent infers date and flags body when when is missing`` () =
+    let md = "---\ntype: Event\ntitle: School picnic\nall_day: true\ncontext: [school]\n---\nBring a teddy.\n"
+    let chat = FakeChatClient([ Responses.final md ])
+    let o = Steps.createEvent (chat :> IChatClient) (genInput "School picnic")
+    Assert.Equal("2026-06-24T12:00:00+02:00", o.Record.When)  // fell back to reference date
+    Assert.Contains("Date inferred", o.Body)
+
+[<Fact>]
+let ``Steps.createCommitment parses status unresolved`` () =
+    let md = "---\ntype: Commitment\ntitle: Return the form\nstatus: unresolved\npriority: medium\ndue: 2026-07-01\ncontext: [school]\n---\nOwe the school a signed form.\n"
+    let chat = FakeChatClient([ Responses.final md ])
+    let o = Steps.createCommitment (chat :> IChatClient) (genInput "Return the form")
+    Assert.Equal("unresolved", o.Record.Status)
+    Assert.Equal("2026-07-01", o.Record.Due)
+
+[<Fact>]
+let ``Steps.createNote parses a note and stamps source`` () =
+    let md = "---\ntype: Note\ntitle: Medical aid details\ncontext: [medical]\ntags: [insurance]\n---\n## Medical aid\nPolicy 12345.\n"
+    let chat = FakeChatClient([ Responses.final md ])
+    let o = Steps.createNote (chat :> IChatClient) (genInput "Medical aid number is 12345")
+    Assert.Equal("Medical aid details", o.Record.Title)
+    Assert.Equal<string array>([| "medical" |], o.Record.Context)
+    Assert.Equal("messages/m.md", o.Record.Source)            // linkage from input
+    Assert.Contains("Policy 12345", o.Body)

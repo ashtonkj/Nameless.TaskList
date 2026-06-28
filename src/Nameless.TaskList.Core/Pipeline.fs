@@ -96,25 +96,6 @@ module Pipeline =
         if List.isEmpty items then stripped
         else stripped + "\n\n## Linked people\n\n" + String.concat "\n" items + "\n"
 
-    /// Strip surrounding code fences / leading prose from a model reply.
-    let private stripFences (text: string) =
-        let trimmed = (if isNull text then "" else text).Trim()
-        let idx = trimmed.IndexOf("```")
-        if idx >= 0 then
-            let afterFirst = trimmed.IndexOf('\n', idx)
-            let lastFence = trimmed.LastIndexOf("```")
-            if afterFirst > 0 && lastFence > afterFirst then trimmed.[afterFirst..lastFence - 1].Trim()
-            else trimmed
-        else trimmed
-
-    /// Map an urgency string to a priority value.
-    let private urgencyToPriority (u: string) =
-        match (if isNull u then "" else u).ToLowerInvariant() with
-        | "critical" -> "critical"
-        | "high" -> "high"
-        | "low" -> "low"
-        | _ -> "medium"
-
     let private knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
 
     // Build a (slug -> person file path) index over every person's filename, title + aliases.
@@ -182,12 +163,8 @@ module Pipeline =
                 if not (vault.Exists candidate) then candidate else tryN (n + 1)
             tryN 2
 
-    type private EntityOutcome<'T> = { Record: 'T; Body: string }
-
     type private EntitySpec<'T> =
-        { Prompt: string
-          BuildUser: string -> string
-          Interpret: string -> string -> EntityOutcome<'T>   // stripped reply, intent -> outcome
+        { Generate: string -> Steps.EntityOutcome<'T>   // intent -> outcome
           BasePath: 'T -> string
           TitleOf: 'T -> string }
 
@@ -211,8 +188,7 @@ module Pipeline =
     let private writeEntities (deps: PipelineDeps) (spec: EntitySpec<'T>) (intents: string list) : string list =
         intents
         |> List.map (fun intent ->
-            let raw = Agent.runConversation deps.Chat [] spec.Prompt (spec.BuildUser intent)
-            let outcome = spec.Interpret (stripFences raw) intent
+            let outcome = spec.Generate intent
             let text = MarkdownFile.ToString (Frontmatter.serialize outcome.Record) outcome.Body
             let basePath = spec.BasePath outcome.Record
             let newSlug = Naming.slug (spec.TitleOf outcome.Record)
@@ -362,10 +338,7 @@ module Pipeline =
             // surface display name, so wikilinks and the relationship graph — which key off slugs
             // — resolve to the right person file. Applied both to pipeline-set people (from the
             // classification) and to people the model emits onto its task/event records.
-            let slugifyPeople (a: string array) =
-                if isNull a then [||]
-                else a |> Array.map Naming.slug |> Array.filter (fun s -> s <> "") |> Array.distinct
-            let peopleSlugs = slugifyPeople classification.PeopleMentioned
+            let peopleSlugs = Steps.slugifyPeople classification.PeopleMentioned
 
             // --- Helper: create a new topic file from a title (used by the topic-match decision below) ---
             let createNewTopic (title: string) =
@@ -394,31 +367,13 @@ module Pipeline =
 
             // --- Step: create task files via the shared entity writer ---
             let taskSpec : EntitySpec<Task> =
-                { Prompt = Prompts.taskCreateSystem
-                  BuildUser =
+                { Generate =
                     (fun intent ->
-                        sprintf "Message intent: %s\nRaw message: %s\nMessage reference date (resolve relative dates like \"tomorrow\" against this): %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
-                            intent msg.Content (isoTimestamp msg.Timestamp) (String.concat ", " classification.Contexts) classification.Urgency messagePath)
-                  Interpret =
-                    (fun stripped intent ->
-                        try
-                            let parsed = MarkdownFile.FromString stripped
-                            match parsed.FrontMatter with
-                            | Some fm ->
-                                let t = Frontmatter.deserialize<Task> fm
-                                if not (System.String.IsNullOrWhiteSpace t.Title) then
-                                    // The pipeline owns identity + linkage; the model often omits them.
-                                    { Record = { t with Type = "Task"; Description = (if System.String.IsNullOrWhiteSpace t.Description then intent else t.Description); Topic = topicPath; SourceMessage = messagePath; People = slugifyPeople t.People }
-                                      Body = parsed.Content }
-                                else raise (System.Exception("empty title"))
-                            | None -> raise (System.Exception("no frontmatter"))
-                        with _ ->
-                            let fb : Task =
-                                { Type = "Task"; Title = intent; Description = intent; Status = "pending"
-                                  Priority = urgencyToPriority classification.Urgency; Due = ""
-                                  Context = classification.Contexts; People = peopleSlugs
-                                  Topic = topicPath; SourceMessage = messagePath }
-                            { Record = fb; Body = intent })
+                        Steps.createTask deps.Chat
+                            { Intent = intent; Raw = msg.Content; ReferenceDate = isoTimestamp msg.Timestamp
+                              Contexts = classification.Contexts; Urgency = classification.Urgency
+                              TopicPath = topicPath; MessagePath = messagePath
+                              PeopleSlugs = peopleSlugs; TaskPaths = [] })
                   BasePath = (fun t -> Naming.taskPath t.Title)
                   TitleOf = (fun t -> t.Title) }
 
@@ -454,7 +409,7 @@ module Pipeline =
                             let updatedRaw =
                                 Agent.runConversation deps.Chat [] Prompts.taskUpdateSystem
                                     (Prompts.taskUpdateUser existingRaw intent msg.Content)
-                                |> stripFences
+                                |> Steps.stripFences
                             // Parse the model's updated task; fall back to old record + raw body on failure.
                             let newRec, newBody =
                                 try
@@ -497,33 +452,13 @@ module Pipeline =
                 | _ -> fallback
 
             let eventSpec : EntitySpec<Event> =
-                { Prompt = Prompts.eventCreateSystem
-                  BuildUser =
+                { Generate =
                     (fun intent ->
-                        sprintf "Event intent: %s\nRaw message: %s\nMessage reference date: %s\nContext(s): %s\nSource message file: %s"
-                            intent msg.Content (isoTimestamp msg.Timestamp) (String.concat ", " classification.Contexts) messagePath)
-                  Interpret =
-                    (fun stripped intent ->
-                        let flag = "\n\n_Date inferred from message; please confirm._"
-                        let ensureDated (e: Event) (body: string) =
-                            match System.DateTimeOffset.TryParse(e.When) with
-                            | true, _ -> { Record = e; Body = body }
-                            | _ -> { Record = { e with When = isoTimestamp msg.Timestamp }; Body = body + flag }
-                        try
-                            let parsed = MarkdownFile.FromString stripped
-                            match parsed.FrontMatter with
-                            | Some fm ->
-                                let e = Frontmatter.deserialize<Event> fm
-                                if not (System.String.IsNullOrWhiteSpace e.Title) then
-                                    ensureDated { e with Type = "Event"; Description = (if System.String.IsNullOrWhiteSpace e.Description then intent else e.Description); Topic = topicPath; TasksLinked = Array.ofList taskPaths; People = slugifyPeople e.People } parsed.Content
-                                else raise (System.Exception("empty title"))
-                            | None -> raise (System.Exception("no frontmatter"))
-                        with _ ->
-                            let fb : Event =
-                                { Type = "Event"; Title = intent; Description = intent; When = isoTimestamp msg.Timestamp; AllDay = true
-                                  Context = classification.Contexts; Location = ""; People = peopleSlugs
-                                  Topic = topicPath; TasksLinked = Array.ofList taskPaths; ReminderDaysBefore = 3 }
-                            { Record = fb; Body = intent + flag })
+                        Steps.createEvent deps.Chat
+                            { Intent = intent; Raw = msg.Content; ReferenceDate = isoTimestamp msg.Timestamp
+                              Contexts = classification.Contexts; Urgency = classification.Urgency
+                              TopicPath = topicPath; MessagePath = messagePath
+                              PeopleSlugs = peopleSlugs; TaskPaths = taskPaths })
                   BasePath = (fun e -> Naming.eventPath (parseWhen e.When msg.Timestamp) e.Title)
                   TitleOf = (fun e -> e.Title) }
 
@@ -531,61 +466,28 @@ module Pipeline =
 
             // --- Step: create commitment files ---
             let commitmentSpec : EntitySpec<Commitment> =
-                { Prompt = Prompts.commitmentCreateSystem
-                  BuildUser =
+                { Generate =
                     (fun intent ->
-                        sprintf "Commitment intent: %s\nRaw message: %s\nReference date (resolve relative dates against this): %s\nContext(s): %s\nUrgency: %s\nSource message file: %s"
-                            intent msg.Content (isoTimestamp msg.Timestamp) (String.concat ", " classification.Contexts) classification.Urgency messagePath)
-                  Interpret =
-                    (fun stripped intent ->
-                        try
-                            let parsed = MarkdownFile.FromString stripped
-                            match parsed.FrontMatter with
-                            | Some fm ->
-                                let c = Frontmatter.deserialize<Commitment> fm
-                                if not (System.String.IsNullOrWhiteSpace c.Title) then
-                                    { Record = { c with Type = "Commitment"; Description = (if System.String.IsNullOrWhiteSpace c.Description then intent else c.Description); Topic = topicPath; SourceMessage = messagePath }
-                                      Body = parsed.Content }
-                                else raise (System.Exception("empty title"))
-                            | None -> raise (System.Exception("no frontmatter"))
-                        with _ ->
-                            let fb : Commitment =
-                                { Type = "Commitment"; Title = intent; Description = intent; Status = "unresolved"
-                                  Priority = urgencyToPriority classification.Urgency; Due = ""
-                                  Context = classification.Contexts; Topic = topicPath
-                                  TaskAssigned = ""; EscalateAfterDays = 7; SourceMessage = messagePath }
-                            { Record = fb; Body = intent })
+                        Steps.createCommitment deps.Chat
+                            { Intent = intent; Raw = msg.Content; ReferenceDate = isoTimestamp msg.Timestamp
+                              Contexts = classification.Contexts; Urgency = classification.Urgency
+                              TopicPath = topicPath; MessagePath = messagePath
+                              PeopleSlugs = peopleSlugs; TaskPaths = [] })
                   BasePath = (fun c -> Naming.commitmentPath c.Title)
                   TitleOf = (fun c -> c.Title) }
 
             let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments) |> List.distinct
 
             // --- Step: notes (durable reference only) — match an existing note and merge, else create ---
-            let interpretNote (stripped: string) (intent: string) : Note * string =
-                try
-                    let parsed = MarkdownFile.FromString stripped
-                    match parsed.FrontMatter with
-                    | Some fm ->
-                        let n = Frontmatter.deserialize<Note> fm
-                        // People linkage is pipeline-owned (slugged from the classification), like
-                        // Source — the model is unreliable here and sometimes emits tags or display
-                        // names into people_linked.
-                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Description = (if System.String.IsNullOrWhiteSpace n.Description then intent else n.Description); Source = messagePath; PeopleLinked = peopleSlugs }, parsed.Content
-                        else raise (System.Exception("empty title"))
-                    | None -> raise (System.Exception("no frontmatter"))
-                with _ ->
-                    { Type = "Note"; Title = intent; Description = intent; Context = classification.Contexts
-                      PeopleLinked = peopleSlugs; Tags = [||]
-                      Source = messagePath; LastVerified = "" }, intent
-
             let createNewNote (intent: string) : string =
-                let raw =
-                    Agent.runConversation deps.Chat [] Prompts.noteCreateSystem
-                        (sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
-                            intent msg.Content (String.concat ", " classification.Contexts) messagePath)
-                let record, body = interpretNote (stripFences raw) intent
-                let text = MarkdownFile.ToString (Frontmatter.serialize record) body
-                let path = freePath deps.Vault (Naming.notePath record.Title)
+                let outcome =
+                    Steps.createNote deps.Chat
+                        { Intent = intent; Raw = msg.Content; ReferenceDate = isoTimestamp msg.Timestamp
+                          Contexts = classification.Contexts; Urgency = classification.Urgency
+                          TopicPath = ""; MessagePath = messagePath
+                          PeopleSlugs = peopleSlugs; TaskPaths = [] }
+                let text = MarkdownFile.ToString (Frontmatter.serialize outcome.Record) outcome.Body
+                let path = freePath deps.Vault (Naming.notePath outcome.Record.Title)
                 deps.Vault.Write(path, text)
                 path
 
@@ -617,7 +519,7 @@ module Pipeline =
                             let mergedBody =
                                 Agent.runConversation deps.Chat [] Prompts.noteUpdateSystem
                                     (Prompts.noteUpdateUser existing.Content intent msg.Content)
-                                |> stripFences
+                                |> Steps.stripFences
                             let merged =
                                 { n with
                                     LastVerified = isoTimestamp msg.Timestamp
@@ -678,7 +580,7 @@ module Pipeline =
                     let raw = Agent.runConversation deps.Chat [] Prompts.personStubSystem user
                     let record, body =
                         try
-                            let parsed = MarkdownFile.FromString (stripFences raw)
+                            let parsed = MarkdownFile.FromString (Steps.stripFences raw)
                             match parsed.FrontMatter with
                             | Some fm ->
                                 let p = Frontmatter.deserialize<Person> fm

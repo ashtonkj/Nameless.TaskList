@@ -32,3 +32,53 @@ let ``runCase scores a classify case end to end with a fake model`` () =
         let r = Runner.runCase (chat :> IChatClient) (embedder :> IEmbedder) root 5 0.5 case
         Assert.Equal(1.0, r.Score, 3)
         Assert.Equal(Some(true, true), r.NoisePair))
+
+/// Write a single generative case under <root>/<step>/c.json, script one model reply, run it.
+let private runGen (root: string) (step: string) (inputJson: string) (expectedJson: string) (reply: string) : Scoring.CaseResult =
+    Directory.CreateDirectory(Path.Combine(root, step)) |> ignore
+    File.WriteAllText(Path.Combine(root, step, "c.json"),
+        sprintf """{"id":"c","step":"%s","world":"_base","input":%s,"expected":%s}""" step inputJson expectedJson)
+    let chat = FakeChatClient([ Responses.final reply ])
+    let embedder = FakeEmbedder(fun _ -> [| 1.0 |])
+    let case = Dataset.load root [ step ] |> List.head
+    Runner.runCase (chat :> IChatClient) (embedder :> IEmbedder) root 5 0.5 case
+
+[<Fact>]
+let ``runCase scores a task-create case end to end`` () =
+    withDataset (fun root ->
+        let r =
+            runGen root "task-create"
+                """{"intent":"Book Ethan's flu vaccine before next Friday","message":"...","referenceDate":"2026-06-24","contexts":["medical"],"urgency":"medium"}"""
+                """{"frontmatter":{"status":"pending","priority":"medium","context":["medical"],"due":"2026-07-03"},"titleMatches":"^Book\\b","bodyContains":["flu vaccine"]}"""
+                "---\ntype: Task\ntitle: Book Ethan's flu vaccine\nstatus: pending\npriority: medium\ndue: 2026-07-03\ncontext: [medical]\npeople: []\n---\nBook the flu vaccine.\n"
+        Assert.Equal(1.0, r.Score, 3))
+
+[<Fact>]
+let ``runCase scores an event-create case end to end`` () =
+    withDataset (fun root ->
+        let r =
+            runGen root "event-create"
+                """{"intent":"Dentist at 10am on 22 June","message":"...","referenceDate":"2026-06-18","contexts":["medical"],"urgency":"medium"}"""
+                """{"frontmatter":{"all_day":false,"when":"2026-06-22T10:00:00+02:00"},"titleMatches":"[Dd]entist"}"""
+                "---\ntype: Event\ntitle: Dentist appointment\nwhen: 2026-06-22T10:00:00+02:00\nall_day: false\ncontext: [medical]\n---\nDentist visit.\n"
+        Assert.Equal(1.0, r.Score, 3))
+
+[<Fact>]
+let ``runCase scores a commitment-create case end to end`` () =
+    withDataset (fun root ->
+        let r =
+            runGen root "commitment-create"
+                """{"intent":"Return the signed form by 1 July","message":"...","referenceDate":"2026-06-24","contexts":["school"],"urgency":"medium"}"""
+                """{"frontmatter":{"status":"unresolved","due":"2026-07-01"},"bodyContains":["form"]}"""
+                "---\ntype: Commitment\ntitle: Return signed form\nstatus: unresolved\npriority: medium\ndue: 2026-07-01\ncontext: [school]\n---\nReturn the signed form.\n"
+        Assert.Equal(1.0, r.Score, 3))
+
+[<Fact>]
+let ``runCase scores a note-create case end to end`` () =
+    withDataset (fun root ->
+        let r =
+            runGen root "note-create"
+                """{"intent":"Medical aid number MA-4471829","message":"...","referenceDate":"2026-06-24","contexts":["medical"],"urgency":"low"}"""
+                """{"frontmatter":{"context":["medical"]},"bodyContains":["MA-4471829"]}"""
+                "---\ntype: Note\ntitle: Medical aid details\ncontext: [medical]\ntags: []\n---\nMembership MA-4471829.\n"
+        Assert.Equal(1.0, r.Score, 3))
