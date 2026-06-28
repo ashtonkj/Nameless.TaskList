@@ -357,6 +357,37 @@ module Steps =
         Agent.runConversation chat [] Prompts.noteUpdateSystem (Prompts.noteUpdateUser existingBody intent raw)
         |> stripFences
 
+    /// The contexts a person can be filed under (role-derived). Public so the pipeline and the
+    /// person-stub fallback share one definition.
+    let knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
+
+    /// Generate a person-stub record+body. Mirrors the former Pipeline personStubSystem call +
+    /// interpret + fallback. The mention name travels in input.Intent; contexts in input.Contexts;
+    /// the message path in input.MessagePath. The fallback Context is a single role-derived context
+    /// ([| messageCtx |]), matching the pipeline.
+    let createPersonStub (chat: IChatClient) (input: GenInput) : EntityOutcome<Person> =
+        let user =
+            sprintf "Person mentioned: %s\nMessage context: %s\nMentioned in: %s"
+                input.Intent (String.concat ", " input.Contexts) input.MessagePath
+        let raw = Agent.runConversation chat [] Prompts.personStubSystem user
+        try
+            let parsed = MarkdownFile.FromString (stripFences raw)
+            match parsed.FrontMatter with
+            | Some fm ->
+                let p = Frontmatter.deserialize<Person> fm
+                if not (System.String.IsNullOrWhiteSpace p.Title) then { Record = { p with Type = "Person" }; Body = parsed.Content }
+                else raise (System.Exception("empty title"))
+            | None -> raise (System.Exception("no frontmatter"))
+        with _ ->
+            let messageCtx =
+                input.Contexts
+                |> Array.tryFind (fun c -> List.contains c knownContexts)
+                |> Option.defaultValue "family"
+            { Record =
+                { Type = "Person"; Title = input.Intent; Role = ""; Context = [| messageCtx |]
+                  Channel = ""; Phone = ""; Email = ""; Tags = [||]; Aliases = [||] }
+              Body = sprintf "%s\n\n⚠ Stub — details to be completed." input.Intent }
+
     /// Generate a Commitment record+body from one intent. Mirrors the former Pipeline commitmentSpec.
     let createCommitment (chat: IChatClient) (input: GenInput) : EntityOutcome<Commitment> =
         let user =

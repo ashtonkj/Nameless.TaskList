@@ -96,8 +96,6 @@ module Pipeline =
         if List.isEmpty items then stripped
         else stripped + "\n\n## Linked people\n\n" + String.concat "\n" items + "\n"
 
-    let private knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
-
     // Build a (slug -> person file path) index over every person's filename, title + aliases.
     // The filename slug is included as a key because curated person files are often named by a
     // short canonical slug (e.g. aleks-ashton.md) that differs from the full-name title
@@ -460,7 +458,7 @@ module Pipeline =
             // --- Step: resolve mentioned people (alias-aware) and create stubs only when genuinely new ---
             let messageCtx =
                 classification.Contexts
-                |> Array.tryFind (fun c -> List.contains c knownContexts)
+                |> Array.tryFind (fun c -> List.contains c Steps.knownContexts)
                 |> Option.defaultValue "family"
             classification.PeopleMentioned
             |> Array.toList
@@ -480,23 +478,12 @@ module Pipeline =
                         | Some existingPath -> addPersonAlias deps.Vault existingPath name mentionSlug
                         | None -> ()
                     | None ->
-                    let user =
-                        sprintf "Person mentioned: %s\nMessage context: %s\nMentioned in: %s"
-                            name (String.concat ", " classification.Contexts) messagePath
-                    let raw = Agent.runConversation deps.Chat [] Prompts.personStubSystem user
-                    let record, body =
-                        try
-                            let parsed = MarkdownFile.FromString (Steps.stripFences raw)
-                            match parsed.FrontMatter with
-                            | Some fm ->
-                                let p = Frontmatter.deserialize<Person> fm
-                                if not (System.String.IsNullOrWhiteSpace p.Title) then { p with Type = "Person" }, parsed.Content
-                                else raise (System.Exception("empty title"))
-                            | None -> raise (System.Exception("no frontmatter"))
-                        with _ ->
-                            { Type = "Person"; Title = name; Role = ""; Context = [| messageCtx |]
-                              Channel = ""; Phone = ""; Email = ""; Tags = [||]; Aliases = [||] },
-                            sprintf "%s\n\n⚠ Stub — details to be completed." name
+                    let outcome =
+                        Steps.createPersonStub deps.Chat
+                            { Intent = name; Raw = ""; ReferenceDate = ""; Contexts = classification.Contexts
+                              Urgency = ""; TopicPath = ""; MessagePath = messagePath
+                              PeopleSlugs = [||]; TaskPaths = [] }
+                    let record, body = outcome.Record, outcome.Body
                     let canonicalSlug = Naming.slug record.Title
                     match resolvePerson index canonicalSlug with
                     | Some existingPath ->
@@ -509,7 +496,7 @@ module Pipeline =
                                 if not (isNull record.Context) && record.Context.Length > 0
                                    && not (System.String.IsNullOrWhiteSpace record.Context.[0])
                                 then record.Context.[0] else messageCtx
-                            if List.contains candidate knownContexts then candidate else messageCtx
+                            if List.contains candidate Steps.knownContexts then candidate else messageCtx
                         // If the surface mention differs from the canonical title, seed it as an alias.
                         let seededAliases =
                             if mentionSlug <> canonicalSlug && not (System.String.IsNullOrWhiteSpace name) then

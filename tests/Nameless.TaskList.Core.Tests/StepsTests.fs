@@ -150,3 +150,23 @@ let ``Steps.updateNote returns the stripped body`` () =
     let body = Steps.updateNote (chat :> IChatClient) "old body" "expiry 2027" "raw"
     Assert.Contains("expires 2027", body)
     Assert.DoesNotContain("```", body)
+
+let private personInput name (contexts: string array) : Steps.GenInput =
+    { Intent = name; Raw = ""; ReferenceDate = ""; Contexts = contexts; Urgency = ""
+      TopicPath = ""; MessagePath = "messages/m.md"; PeopleSlugs = [||]; TaskPaths = [] }
+
+[<Fact>]
+let ``Steps.createPersonStub parses a model person`` () =
+    let md = "---\ntype: Person\ntitle: Dr Brown\nrole: dentist\ncontext: [medical]\naliases: [Brown]\n---\nEthan's dentist. ⚠ Stub — details to be completed.\n"
+    let chat = FakeChatClient([ Responses.final md ])
+    let o = Steps.createPersonStub (chat :> IChatClient) (personInput "Dr Brown" [| "medical" |])
+    Assert.Equal("Dr Brown", o.Record.Title)
+    Assert.Equal("dentist", o.Record.Role)
+
+[<Fact>]
+let ``Steps.createPersonStub falls back to a single role-derived context`` () =
+    let chat = FakeChatClient([ Responses.final "unparseable" ])
+    let o = Steps.createPersonStub (chat :> IChatClient) (personInput "Coach Brian" [| "school"; "family" |])
+    Assert.Equal("Coach Brian", o.Record.Title)
+    Assert.Equal<string array>([| "school" |], o.Record.Context)   // first known context
+    Assert.Contains("Stub", o.Body)
