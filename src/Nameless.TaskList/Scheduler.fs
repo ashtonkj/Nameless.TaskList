@@ -1,7 +1,11 @@
 namespace Nameless.TaskList
 
 open System
+open System.Threading
+open System.Threading.Tasks
 open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.Logging
 open Nameless.TaskList.Core
 open Nameless.TaskList.Core.Ports
 
@@ -18,3 +22,25 @@ module MaintenanceTasks =
 
     let digest (cfg: IConfiguration) (vault: IVault) (chat: IChatClient) (p: Digest.DigestParams) : Digest.DigestResult =
         Digest.generate { Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]; Today = DateTime.Now } p
+
+/// Runs due scheduled tasks on a timer. Registered only when Scheduler:Enabled = "true".
+/// `runTask` (built in Program.fs) dispatches by task name and swallows its own failures so one
+/// failing task never aborts the tick or the others.
+type SchedulerService
+    (tasks: Scheduler.ScheduledTask list, stateStore: ISchedulerStateStore,
+     runTask: Scheduler.ScheduledTask -> unit, checkSeconds: int,
+     logger: ILogger<SchedulerService>) =
+    inherit BackgroundService()
+
+    override _.ExecuteAsync(stoppingToken: CancellationToken) =
+        task {
+            while not stoppingToken.IsCancellationRequested do
+                try
+                    let state = stateStore.Load()
+                    let next = Scheduler.tick DateTime.Now tasks state runTask
+                    stateStore.Save next
+                with ex ->
+                    logger.LogWarning(ex, "scheduler tick failed")
+                try do! Task.Delay(TimeSpan.FromSeconds(float checkSeconds), stoppingToken)
+                with :? OperationCanceledException -> ()
+        } :> Task

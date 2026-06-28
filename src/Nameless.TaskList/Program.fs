@@ -123,6 +123,35 @@ module Program =
                 let logger = sp.GetRequiredService<ILogger<WhatsAppListenerService>>()
                 new WhatsAppListenerService(listener, cursorStore, messages, buildListenerDeps, "whatsapp_new_message", reconnectSeconds, logger)) |> ignore
 
+        // Scheduled maintenance: register the in-app scheduler only when enabled.
+        if cfg.["Scheduler:Enabled"] = "true" then
+            builder.Services.AddHostedService<SchedulerService>(fun sp ->
+                let tasks =
+                    [ "daily-digest",  cfg.["Scheduler:DailyDigest"]
+                      "weekly-digest", cfg.["Scheduler:WeeklyDigest"]
+                      "reindex",       cfg.["Scheduler:Reindex"] ]
+                    |> List.choose (fun (name, s) ->
+                        Scheduler.parseSpec s |> Option.map (fun spec -> ({ Name = name; Spec = spec } : Scheduler.ScheduledTask)))
+                let checkSeconds = match System.Int32.TryParse(cfg.["Scheduler:CheckIntervalSeconds"]) with | true, n -> n | _ -> 60
+                let statePath = System.IO.Path.Combine(cfg.["Vault:Root"], ".taskmeister", "scheduler-state.json")
+                let stateStore = FileSystemSchedulerStateStore(statePath) :> ISchedulerStateStore
+                let vault = sp.GetRequiredService<IVault>()
+                let chat = sp.GetRequiredService<IChatClient>()
+                let logger = sp.GetRequiredService<ILogger<SchedulerService>>()
+                let enabledNames = tasks |> List.map (fun t -> t.Name) |> String.concat ", "
+                logger.LogInformation("Scheduler enabled; tasks: {Tasks}", (if enabledNames = "" then "(none)" else enabledNames))
+                let runTask (t: Scheduler.ScheduledTask) =
+                    try
+                        match t.Name with
+                        | "daily-digest"  -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.daily |> ignore
+                        | "weekly-digest" -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.weekly |> ignore
+                        | "reindex"       -> MaintenanceTasks.reindex cfg vault |> ignore
+                        | other           -> logger.LogWarning("unknown scheduled task {Name}", other)
+                        logger.LogInformation("ran scheduled task {Name}", t.Name)
+                    with ex ->
+                        logger.LogWarning(ex, "scheduled task {Name} failed", t.Name)
+                new SchedulerService(tasks, stateStore, runTask, checkSeconds, logger)) |> ignore
+
         let app = builder.Build()
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, ITranscriber, Microsoft.AspNetCore.Http.IResult>(
