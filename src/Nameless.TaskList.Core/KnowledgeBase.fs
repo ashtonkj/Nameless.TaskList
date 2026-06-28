@@ -190,6 +190,21 @@ type Digest =
       Kind: string
       Generated: string }
 
+/// Fixed-offset KB timestamp formatting. The KB records wall-clock timestamps with an explicit
+/// offset (DESIGN §4/§8); that offset is configurable (default +02:00 / SAST) and passed in here,
+/// so output never depends on the server's timezone.
+module Time =
+
+    /// Format a wall-clock DateTime as ISO-8601 with the given fixed offset. SpecifyKind Unspecified
+    /// so the DateTimeOffset ctor never throws on a Local/Utc-kind input.
+    let iso (offset: System.TimeSpan) (ts: System.DateTime) : string =
+        System.DateTimeOffset(System.DateTime.SpecifyKind(ts, System.DateTimeKind.Unspecified), offset)
+            .ToString("yyyy-MM-ddTHH:mm:sszzz")
+
+    /// The current instant expressed at the given fixed offset.
+    let now (offset: System.TimeSpan) : System.DateTimeOffset =
+        System.DateTimeOffset.UtcNow.ToOffset(offset)
+
 module Frontmatter =
     let private serializer =
         SerializerBuilder()
