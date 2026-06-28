@@ -143,11 +143,10 @@ module Program =
                 let runTask (t: Scheduler.ScheduledTask) =
                     try
                         match t.Name with
-                        | "daily-digest"  -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.daily |> ignore
-                        | "weekly-digest" -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.weekly |> ignore
-                        | "reindex"       -> MaintenanceTasks.reindex cfg vault |> ignore
+                        | "daily-digest"  -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.daily |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
+                        | "weekly-digest" -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.weekly |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
+                        | "reindex"       -> MaintenanceTasks.reindex cfg vault |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
                         | other           -> logger.LogWarning("unknown scheduled task {Name}", other)
-                        logger.LogInformation("ran scheduled task {Name}", t.Name)
                     with ex ->
                         logger.LogWarning(ex, "scheduled task {Name} failed", t.Name)
                 new SchedulerService(tasks, stateStore, runTask, checkSeconds, logger)) |> ignore

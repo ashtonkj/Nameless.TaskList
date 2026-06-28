@@ -38,6 +38,7 @@ type SchedulerService
                 try
                     let state = stateStore.Load()
                     let next = Scheduler.tick DateTime.Now tasks state runTask
+                    // Save once per tick (not per task); safe to re-run a task after a crash — digests are date-stamped and reindex is idempotent.
                     stateStore.Save next
                 with ex ->
                     logger.LogWarning(ex, "scheduler tick failed")
