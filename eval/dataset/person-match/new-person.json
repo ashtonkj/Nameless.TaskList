@@ -1,0 +1,8 @@
+{
+  "id": "new-person",
+  "step": "person-match",
+  "tags": ["distinct-person"],
+  "world": "ashford-family",
+  "input": { "name": "Coach Brian", "contexts": ["school"] },
+  "expected": { "decision": "nomatch" }
+}

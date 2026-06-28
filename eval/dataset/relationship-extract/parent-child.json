@@ -1,0 +1,8 @@
+{
+  "id": "parent-child",
+  "step": "relationship-extract",
+  "tags": ["directed"],
+  "world": "ashford-family",
+  "input": { "slugs": ["sarah-ashford", "ethan-ashford"], "message": "Sarah picked up her son Ethan from swimming." },
+  "expected": { "relationships": [ { "from": "sarah-ashford", "to": "ethan-ashford", "relation": "parent-child" } ] }
+}

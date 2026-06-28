@@ -1,0 +1,8 @@
+{
+  "id": "same-action",
+  "step": "task-match",
+  "tags": ["same-action-restated"],
+  "world": "ashford-family",
+  "input": { "intent": "Register Ethan for swimming lessons" },
+  "expected": { "decision": "match", "slug": "sign-up-ethan-for-swimming" }
+}

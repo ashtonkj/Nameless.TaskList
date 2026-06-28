@@ -106,3 +106,39 @@ let ``scoreEvent matches when by instant and all_day`` () =
                      Context = [||]; Location = ""; People = [||]; Topic = ""; TasksLinked = [||]; ReminderDaysBefore = 3 }
           Body = "" }
     Assert.Equal(1.0, (Scoring.scoreEvent case (Ok ev)).Score, 3)
+
+let private relEdge from' to' relation : RelationshipEdge =
+    { From = from'; To = to'; Relation = relation; Descriptor = null; Confidence = "high" }
+
+[<Fact>]
+let ``scoreMatch rewards the right slug and a correct no-match`` () =
+    let m = genCase "task-match" """{"decision":"match","slug":"sign-up-ethan-for-swimming"}"""
+    Assert.Equal(1.0, (Scoring.scoreMatch m (Ok (Some "sign-up-ethan-for-swimming"))).Score, 3)
+    Assert.Equal(0.0, (Scoring.scoreMatch m (Ok (Some "other"))).Score, 3)
+    let nm = genCase "task-match" """{"decision":"nomatch"}"""
+    Assert.Equal(1.0, (Scoring.scoreMatch nm (Ok None)).Score, 3)
+    Assert.Equal(0.0, (Scoring.scoreMatch nm (Ok (Some "x"))).Score, 3)
+
+[<Fact>]
+let ``scoreNoteUpdate checks bodyContains`` () =
+    let c = genCase "note-update" """{"bodyContains":["expires 2027"]}"""
+    Assert.Equal(1.0, (Scoring.scoreNoteUpdate c (Ok "## Medical aid\nPolicy expires 2027.")).Score, 3)
+    Assert.Equal(0.0, (Scoring.scoreNoteUpdate c (Ok "nothing relevant")).Score, 3)
+
+[<Fact>]
+let ``scoreRelationships F1 with symmetric pair order-insensitive`` () =
+    let c = genCase "relationship-extract" """{"relationships":[{"from":"a","to":"b","relation":"sibling"}]}"""
+    // symmetric: from/to swapped still matches
+    let ex : RelationshipExtraction = { Relationships = [| relEdge "b" "a" "sibling" |] }
+    Assert.Equal(1.0, (Scoring.scoreRelationships c (Ok ex)).Score, 3)
+    // wrong relation -> 0
+    let ex2 : RelationshipExtraction = { Relationships = [| relEdge "a" "b" "friend" |] }
+    Assert.Equal(0.0, (Scoring.scoreRelationships c (Ok ex2)).Score, 3)
+
+[<Fact>]
+let ``scoreRelationships directed relation respects from-to`` () =
+    let c = genCase "relationship-extract" """{"relationships":[{"from":"sarah-ashford","to":"ethan-ashford","relation":"parent-child"}]}"""
+    let swapped : RelationshipExtraction = { Relationships = [| relEdge "ethan-ashford" "sarah-ashford" "parent-child" |] }
+    Assert.Equal(0.0, (Scoring.scoreRelationships c (Ok swapped)).Score, 3)   // direction matters
+    let right : RelationshipExtraction = { Relationships = [| relEdge "sarah-ashford" "ethan-ashford" "parent-child" |] }
+    Assert.Equal(1.0, (Scoring.scoreRelationships c (Ok right)).Score, 3)

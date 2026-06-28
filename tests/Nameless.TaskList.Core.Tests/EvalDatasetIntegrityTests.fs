@@ -6,7 +6,11 @@ open Nameless.TaskList.Eval
 open Xunit
 
 let private datasetRoot = Path.Combine(Config.repoRoot, "eval", "dataset")
-let private knownSteps = set [ "classify"; "topic-match"; "task-create"; "event-create"; "commitment-create"; "note-create" ]
+let private knownSteps =
+    set [ "classify"; "topic-match"
+          "task-create"; "event-create"; "commitment-create"; "note-create"
+          "task-match"; "note-match"; "person-match"
+          "task-update"; "note-update"; "person-stub-create"; "relationship-extract" ]
 
 [<Fact>]
 let ``every committed case parses and names a known step`` () =

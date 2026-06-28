@@ -1,0 +1,8 @@
+{
+  "id": "different-action",
+  "step": "task-match",
+  "tags": ["distinct-action"],
+  "world": "ashford-family",
+  "input": { "intent": "Buy Sarah a birthday present" },
+  "expected": { "decision": "nomatch" }
+}

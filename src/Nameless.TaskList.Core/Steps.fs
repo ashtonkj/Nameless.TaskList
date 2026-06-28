@@ -246,6 +246,157 @@ module Steps =
                   Source = input.MessagePath; LastVerified = "" }
               Body = input.Intent }
 
+    /// Shared shortlist-and-confirm core for the match sites (tasks, notes, people).
+    /// Embeds queryText, scores each candidate's embedText by cosine, keeps those >= floor,
+    /// takes the top topK, then asks the model (systemPrompt over buildPayload displayLines) to
+    /// confirm a match and returns the matched slug. Best-effort: empty candidates / embedder
+    /// failure / parse error / no confirmed match all yield None.
+    let shortlistAndConfirm
+        (chat: IChatClient) (embedder: IEmbedder) (queryText: string)
+        (candidates: (string * string * string) list)
+        (floor: float) (topK: int) (systemPrompt: string)
+        (buildPayload: string list -> string) : string option =
+        if List.isEmpty candidates then None
+        else
+            try
+                let q = embedder.Embed queryText
+                let shortlisted =
+                    candidates
+                    |> List.map (fun (slug, embedText, line) -> slug, line, Similarity.cosine q (embedder.Embed embedText))
+                    |> List.filter (fun (_, _, s) -> s >= floor)
+                    |> List.sortByDescending (fun (_, _, s) -> s)
+                    |> List.truncate topK
+                    |> List.map (fun (slug, line, _) -> slug, line)
+                match shortlisted with
+                | [] -> None
+                | sl ->
+                    let payload = buildPayload (sl |> List.map snd)
+                    match Prompts.parseTopicMatch (Agent.runConversation chat [] systemPrompt payload) with
+                    | Ok m when m.Match ->
+                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
+                        sl |> List.tryPick (fun (slug, _) -> if slug.ToLowerInvariant() = normalized then Some slug else None)
+                    | _ -> None
+            with _ -> None
+
+    /// Decide whether `intent` matches an existing pending task (None = no confirmed match).
+    let matchTask (chat: IChatClient) (embedder: IEmbedder) (vault: IVault) (intent: string) (floor: float) (topK: int) : string option =
+        let existingTasks =
+            vault.ListFiles "tasks/pending"
+            |> List.choose (fun path ->
+                try
+                    let mf = MarkdownFile.FromString (vault.Read path)
+                    match mf.FrontMatter with
+                    | Some fm ->
+                        let t = Frontmatter.deserialize<Task> fm
+                        let slug = System.IO.Path.GetFileNameWithoutExtension(path)
+                        let summary = mf.Content.Trim()
+                        Some (slug, t.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug t.Title summary)
+                    | None -> None
+                with _ -> None)
+        let buildPayload lines = sprintf "New task intent: %s\n\nCandidate tasks:\n%s" intent (String.concat "\n\n" lines)
+        shortlistAndConfirm chat embedder intent existingTasks floor topK Prompts.taskMatchSystem buildPayload
+
+    /// Decide whether `intent` matches an existing note (None = no confirmed match).
+    let matchNote (chat: IChatClient) (embedder: IEmbedder) (vault: IVault) (intent: string) (floor: float) (topK: int) : string option =
+        let existingNotes =
+            vault.ListFiles "notes"
+            |> List.choose (fun path ->
+                try
+                    let mf = MarkdownFile.FromString (vault.Read path)
+                    match mf.FrontMatter with
+                    | Some fm ->
+                        let n = Frontmatter.deserialize<Note> fm
+                        let slug = System.IO.Path.GetFileNameWithoutExtension(path)
+                        let summary = mf.Content.Trim()
+                        Some (slug, n.Title + "\n" + summary, sprintf "slug: %s\ntitle: %s\nsummary: %s" slug n.Title summary)
+                    | None -> None
+                with _ -> None)
+        let buildPayload lines = sprintf "New note intent: %s\n\nCandidate notes:\n%s" intent (String.concat "\n\n" lines)
+        shortlistAndConfirm chat embedder intent existingNotes floor topK Prompts.noteMatchSystem buildPayload
+
+    /// Fuzzy person match (the second chance after exact alias-resolution fails in the pipeline).
+    /// Returns the title-slug of the matched person, or None. Candidate slug is Naming.slug of the
+    /// person's Title (matching the pipeline's resolvePerson key), NOT the filename.
+    let matchPerson (chat: IChatClient) (embedder: IEmbedder) (vault: IVault) (name: string) (contexts: string array) (floor: float) (topK: int) : string option =
+        let existingPeople =
+            vault.ListFilesRecursive "people"
+            |> List.choose (fun path ->
+                try
+                    let mf = MarkdownFile.FromString (vault.Read path)
+                    match mf.FrontMatter with
+                    | Some fm ->
+                        let p = Frontmatter.deserialize<Person> fm
+                        let aliases = if isNull p.Aliases then "" else String.concat " " (Array.toList p.Aliases)
+                        let role = sprintf "%s %s" (if isNull p.Role then "" else p.Role) aliases
+                        let slug = Naming.slug p.Title
+                        Some (slug, p.Title + "\n" + role, sprintf "slug: %s\ntitle: %s\nrole: %s" slug p.Title role)
+                    | None -> None
+                with _ -> None)
+        let buildPayload lines =
+            sprintf "New person mention: %s\nContext: %s\n\nCandidate people:\n%s"
+                name (String.concat ", " contexts) (String.concat "\n\n" lines)
+        let queryText = sprintf "%s\n%s" name (String.concat ", " contexts)
+        shortlistAndConfirm chat embedder queryText existingPeople floor topK Prompts.personMatchSystem buildPayload
+
+    /// Run the task-update prompt and parse the model's merged task. Ok = parsed record+body;
+    /// Error carries the stripped raw reply (the pipeline falls back to the OLD record + that raw
+    /// body on Error, preserving today's behaviour). Never throws on bad model output.
+    let updateTask (chat: IChatClient) (existingFile: string) (intent: string) (raw: string) : Result<EntityOutcome<Task>, string> =
+        let updatedRaw =
+            Agent.runConversation chat [] Prompts.taskUpdateSystem (Prompts.taskUpdateUser existingFile intent raw)
+            |> stripFences
+        try
+            let parsed = MarkdownFile.FromString updatedRaw
+            match parsed.FrontMatter with
+            | Some nfm -> Ok { Record = Frontmatter.deserialize<Task> nfm; Body = parsed.Content }
+            | None -> Error updatedRaw
+        with _ -> Error updatedRaw
+
+    /// Run the note-update prompt; returns the model's updated body (noteUpdateSystem emits body-only).
+    let updateNote (chat: IChatClient) (existingBody: string) (intent: string) (raw: string) : string =
+        Agent.runConversation chat [] Prompts.noteUpdateSystem (Prompts.noteUpdateUser existingBody intent raw)
+        |> stripFences
+
+    /// The contexts a person can be filed under (role-derived). Public so the pipeline and the
+    /// person-stub fallback share one definition.
+    let knownContexts = [ "family"; "medical"; "school"; "finance"; "professional" ]
+
+    /// Generate a person-stub record+body. Mirrors the former Pipeline personStubSystem call +
+    /// interpret + fallback. The mention name travels in input.Intent; contexts in input.Contexts;
+    /// the message path in input.MessagePath. The fallback Context is a single role-derived context
+    /// ([| messageCtx |]), matching the pipeline.
+    let createPersonStub (chat: IChatClient) (input: GenInput) : EntityOutcome<Person> =
+        let user =
+            sprintf "Person mentioned: %s\nMessage context: %s\nMentioned in: %s"
+                input.Intent (String.concat ", " input.Contexts) input.MessagePath
+        let raw = Agent.runConversation chat [] Prompts.personStubSystem user
+        try
+            let parsed = MarkdownFile.FromString (stripFences raw)
+            match parsed.FrontMatter with
+            | Some fm ->
+                let p = Frontmatter.deserialize<Person> fm
+                if not (System.String.IsNullOrWhiteSpace p.Title) then { Record = { p with Type = "Person" }; Body = parsed.Content }
+                else raise (System.Exception("empty title"))
+            | None -> raise (System.Exception("no frontmatter"))
+        with _ ->
+            let messageCtx =
+                input.Contexts
+                |> Array.tryFind (fun c -> List.contains c knownContexts)
+                |> Option.defaultValue "family"
+            { Record =
+                { Type = "Person"; Title = input.Intent; Role = ""; Context = [| messageCtx |]
+                  Channel = ""; Phone = ""; Email = ""; Tags = [||]; Aliases = [||] }
+              Body = sprintf "%s\n\n⚠ Stub — details to be completed." input.Intent }
+
+    /// Run the relationship-extraction prompt over the resolved co-mentioned slugs + the message,
+    /// returning the parsed edges. Mirrors the former Pipeline call; the pipeline still does
+    /// buildEdge/confidence-filter/reconcile/write.
+    let extractRelationships (chat: IChatClient) (resolvedSlugs: string list) (messageContent: string) : Result<Prompts.RelationshipExtraction, string> =
+        let user =
+            sprintf "People mentioned (use these exact slugs for from/to): %s\nMessage: %s"
+                (String.concat ", " resolvedSlugs) messageContent
+        Prompts.parseRelationships (Agent.runConversation chat [] Prompts.relationshipExtractSystem user)
+
     /// Generate a Commitment record+body from one intent. Mirrors the former Pipeline commitmentSpec.
     let createCommitment (chat: IChatClient) (input: GenInput) : EntityOutcome<Commitment> =
         let user =

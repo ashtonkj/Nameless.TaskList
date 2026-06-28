@@ -1,0 +1,8 @@
+{
+  "id": "none",
+  "step": "relationship-extract",
+  "tags": ["no-edge"],
+  "world": "ashford-family",
+  "input": { "slugs": ["sarah-ashford", "dr-naidoo"], "message": "Sarah asked what time the pharmacy closes." },
+  "expected": { "relationships": [] }
+}
