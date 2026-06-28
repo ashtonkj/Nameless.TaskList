@@ -20,6 +20,48 @@ module Steps =
         else people |> Array.filter (fun p ->
             not (endearments.Contains((if isNull p then "" else p).Trim().ToLowerInvariant())))
 
+    /// Strip surrounding code fences / leading prose from a model reply.
+    let stripFences (text: string) =
+        let trimmed = (if isNull text then "" else text).Trim()
+        let idx = trimmed.IndexOf("```")
+        if idx >= 0 then
+            let afterFirst = trimmed.IndexOf('\n', idx)
+            let lastFence = trimmed.LastIndexOf("```")
+            if afterFirst > 0 && lastFence > afterFirst then trimmed.[afterFirst..lastFence - 1].Trim()
+            else trimmed
+        else trimmed
+
+    /// Map an urgency string to a priority value.
+    let urgencyToPriority (u: string) =
+        match (if isNull u then "" else u).ToLowerInvariant() with
+        | "critical" -> "critical"
+        | "high" -> "high"
+        | "low" -> "low"
+        | _ -> "medium"
+
+    /// Canonicalize a people array to distinct non-empty slugs (matching person filenames).
+    let slugifyPeople (a: string array) =
+        if isNull a then [||]
+        else a |> Array.map Naming.slug |> Array.filter (fun s -> s <> "") |> Array.distinct
+
+    /// The outcome of a generation step: the parsed record plus its markdown body.
+    type EntityOutcome<'T> = { Record: 'T; Body: string }
+
+    /// Inputs a generative creator needs: the model-facing fields (intent, raw message,
+    /// pre-formatted reference timestamp, contexts, urgency) plus the pipeline-owned linkage
+    /// the creator stamps onto the record (topic/message paths, people slugs, linked task paths).
+    /// The eval passes neutral stubs for the linkage fields.
+    type GenInput =
+        { Intent: string
+          Raw: string
+          ReferenceDate: string
+          Contexts: string array
+          Urgency: string
+          TopicPath: string
+          MessagePath: string
+          PeopleSlugs: string array
+          TaskPaths: string list }
+
     /// A classify failure carries both the parse error and the raw model reply, so the
     /// pipeline can keep its exact [classify-error] log line (id/chat/reason/raw).
     type ClassifyError = { Message: string; Raw: string }
