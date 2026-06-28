@@ -315,8 +315,9 @@ module Pipeline =
                       FirstSeen = isoTimestamp msg.Timestamp; LastUpdated = isoTimestamp msg.Timestamp
                       SpawnedTasks = [||]; SpawnedEvents = [||]; MessageRefs = [||] }
                 let body = "## Current understanding\n\n## Open questions\n\n## Resolved\n"
-                deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
-                slug, Naming.topicPath slug
+                let path = freePath deps.Vault (Naming.topicPath slug)
+                deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
+                slug, path
 
             // --- Step: topic match (shared with the eval harness) ---
             match Steps.matchTopic deps.Chat deps.Embedder deps.Vault deps.TopK deps.SimilarityFloor classification.Intent with

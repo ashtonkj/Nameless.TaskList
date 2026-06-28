@@ -1141,3 +1141,20 @@ let ``a new message matching a resolved topic re-activates it`` () =
     match Pipeline.processMessage d "M1" "jid" with
     | Processed(topic, _) -> Assert.Contains("status: active", vault.Files.[topic])
     | other -> failwithf "expected Processed, got %A" other
+
+[<Fact>]
+let ``createNewTopic does not overwrite a slug-colliding existing topic`` () =
+    let vault = FakeVault()
+    // A distinct existing topic already occupies the base slug path.
+    vault.Seed("topics/active/birthday-party.md",
+               "---\ntype: Topic\ntitle: Birthday party\nstatus: active\n---\n## Current understanding\nExisting.\n")
+    let classify = Responses.final """{"noise":false,"noise_reason":null,"contexts":["family"],"intent":"party planning","action_required":false,"urgency":"low","people_mentioned":[],"entities":{"tasks":[],"events":[],"commitments":[],"notes":[]}}"""
+    // Embedder throws in the test deps -> topic-match falls back to the tool-enabled path -> this reply.
+    let topicMatch = Responses.final """{"match":false,"topic_slug":null,"confidence":0.1,"match_reason":"new","new_topic_title":"Birthday party"}"""
+    let topicUpdate = Responses.final "STATUS: active\n## Current understanding\nNew party.\n"
+    let chat = FakeChatClient([ classify; topicMatch; topicUpdate ])
+    let d = deps (FakeMessages(Some(sampleMessage ()))) vault chat
+    Pipeline.processMessage d "M1" "jid" |> ignore
+    // existing file untouched; the colliding new topic lands at -2
+    Assert.Contains("Existing.", vault.Files.["topics/active/birthday-party.md"])
+    Assert.True(vault.Files.ContainsKey "topics/active/birthday-party-2.md")
