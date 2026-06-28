@@ -12,6 +12,7 @@
         <Compile Include="Dataset.fs" />
         <Compile Include="Scoring.fs" />
         <Compile Include="Report.fs" />
+        <Compile Include="Runner.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>
 
