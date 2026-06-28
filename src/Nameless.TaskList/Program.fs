@@ -21,11 +21,16 @@ module Program =
         let builder = WebApplication.CreateBuilder(args)
         let cfg = builder.Configuration
 
+        let kbOffset =
+            match System.Double.TryParse(cfg.["Vault:UtcOffsetHours"]) with
+            | true, h -> System.TimeSpan.FromHours h
+            | _ -> System.TimeSpan.FromHours 2.0
+
         // Adapters as singletons behind their ports.
         builder.Services.AddSingleton<IVault>(fun _ ->
             FileSystemVault(cfg.["Vault:Root"]) :> IVault) |> ignore
         builder.Services.AddSingleton<IMessageSource>(fun _ ->
-            PostgresMessageSource(cfg.GetConnectionString("WhatsApp")) :> IMessageSource) |> ignore
+            PostgresMessageSource(cfg.GetConnectionString("WhatsApp"), kbOffset) :> IMessageSource) |> ignore
         builder.Services.AddSingleton<HttpClient>(fun _ -> new HttpClient()) |> ignore
         builder.Services.AddSingleton<IChatClient>(fun sp ->
             let http = sp.GetRequiredService<HttpClient>()
@@ -60,11 +65,6 @@ module Program =
             let store = sp.GetRequiredService<IJobStore>()
             let retain = match System.Int32.TryParse(cfg.["BulkJobs:Retain"]) with | true, v -> v | _ -> 20
             BulkJobs.BulkJobRegistry(store, retain)) |> ignore
-
-        let kbOffset =
-            match System.Double.TryParse(cfg.["Vault:UtcOffsetHours"]) with
-            | true, h -> System.TimeSpan.FromHours h
-            | _ -> System.TimeSpan.FromHours 2.0
 
         let buildDeps (messages: IMessageSource) (vault: IVault) (chat: IChatClient)
                       (embedder: IEmbedder) (vision: IVision) (transcriber: ITranscriber) : PipelineDeps =
@@ -106,7 +106,7 @@ module Program =
                         (sp.GetRequiredService<IVision>())
                         (sp.GetRequiredService<ITranscriber>())
                 let logger = sp.GetRequiredService<ILogger<ImapPollerService>>()
-                new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, initialBackfill, logger)) |> ignore
+                new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, initialBackfill, kbOffset, logger)) |> ignore
 
         // WhatsApp channel: register the LISTEN/NOTIFY listener only when enabled.
         if cfg.["WhatsApp:Listen:Enabled"] = "true" then

@@ -31,7 +31,7 @@ let resumeFrom validity lastUid : EmailCursor =
 [<Fact>]
 let ``fetch resumes from the stored uid and advances the cursor`` () =
     let mb = FakeMailbox(7u, [ mkRaw 10u "<a>"; mkRaw 11u "<b>" ])
-    let mails, next = EmailPoller.fetch mb (resumeFrom 7u 9u) "INBOX" 0u
+    let mails, next = EmailPoller.fetch mb (resumeFrom 7u 9u) "INBOX" 0u (TimeSpan.FromHours 2.0)
     Assert.Equal(9u, mb.LastSince)            // fetched since the stored uid
     Assert.Equal(2, List.length mails)
     Assert.Equal(7u, next.UidValidity)
@@ -41,14 +41,14 @@ let ``fetch resumes from the stored uid and advances the cursor`` () =
 [<Fact>]
 let ``fetch on an empty mailbox keeps the resumed cursor where it was`` () =
     let mb = FakeMailbox(7u, [])
-    let mails, next = EmailPoller.fetch mb (resumeFrom 7u 9u) "INBOX" 0u
+    let mails, next = EmailPoller.fetch mb (resumeFrom 7u 9u) "INBOX" 0u (TimeSpan.FromHours 2.0)
     Assert.Empty(mails)
     Assert.Equal(resumeFrom 7u 9u, next)
 
 [<Fact>]
 let ``fetch maps raw mail to email-platform ChatMessages`` () =
     let mb = FakeMailbox(7u, [ mkRaw 10u "<a>" ])
-    let mails, _ = EmailPoller.fetch mb (resumeFrom 7u 0u) "INBOX" 0u
+    let mails, _ = EmailPoller.fetch mb (resumeFrom 7u 0u) "INBOX" 0u (TimeSpan.FromHours 2.0)
     Assert.Equal("email", (List.head mails).Platform)
 
 // --- Backfill guard: first enable / UIDVALIDITY reset must NOT scan the whole mailbox ---
@@ -57,7 +57,7 @@ let ``fetch maps raw mail to email-platform ChatMessages`` () =
 let ``fetch on first enable seeds the cursor forward and processes nothing with backfill 0`` () =
     let mb = FakeMailbox(7u, [ mkRaw 10u "<a>"; mkRaw 11u "<b>" ])
     // Default (uninitialised) cursor — the first time the poller ever runs.
-    let mails, next = EmailPoller.fetch mb { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 0u
+    let mails, next = EmailPoller.fetch mb { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 0u (TimeSpan.FromHours 2.0)
     Assert.Equal(11u, mb.LastSince)           // seeded to the highest UID, not 0 (no backfill)
     Assert.Empty(mails)                       // go-forward only: nothing processed on first enable
     Assert.Equal(7u, next.UidValidity)
@@ -67,7 +67,7 @@ let ``fetch on first enable seeds the cursor forward and processes nothing with 
 [<Fact>]
 let ``fetch on first enable backfills only the newest N when backfill is set`` () =
     let mb = FakeMailbox(7u, [ mkRaw 8u "<a>"; mkRaw 9u "<b>"; mkRaw 10u "<c>"; mkRaw 11u "<d>" ])
-    let mails, next = EmailPoller.fetch mb { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 2u
+    let mails, next = EmailPoller.fetch mb { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 2u (TimeSpan.FromHours 2.0)
     Assert.Equal(9u, mb.LastSince)            // highest(11) - backfill(2) = 9
     Assert.Equal(2, List.length mails)        // only uids 10 and 11
     Assert.Equal(11u, next.LastUid)
@@ -75,7 +75,7 @@ let ``fetch on first enable backfills only the newest N when backfill is set`` (
 [<Fact>]
 let ``fetch backfill larger than the mailbox starts from zero`` () =
     let mb = FakeMailbox(7u, [ mkRaw 3u "<a>" ])
-    let mails, _ = EmailPoller.fetch mb { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 100u
+    let mails, _ = EmailPoller.fetch mb { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 100u (TimeSpan.FromHours 2.0)
     Assert.Equal(0u, mb.LastSince)            // highest(3) <= backfill(100) -> from 0, no underflow
     Assert.Equal(1, List.length mails)
 
@@ -83,7 +83,7 @@ let ``fetch backfill larger than the mailbox starts from zero`` () =
 let ``fetch re-seeds forward on a uidvalidity change instead of rescanning everything`` () =
     let mb = FakeMailbox(99u, [ mkRaw 40u "<a>"; mkRaw 41u "<b>" ])
     // Stored cursor is initialised but for a stale UIDVALIDITY.
-    let mails, next = EmailPoller.fetch mb (resumeFrom 7u 50u) "INBOX" 0u
+    let mails, next = EmailPoller.fetch mb (resumeFrom 7u 50u) "INBOX" 0u (TimeSpan.FromHours 2.0)
     Assert.Equal(41u, mb.LastSince)           // re-seeded forward to the new highest, not 0
     Assert.Empty(mails)
     Assert.Equal(99u, next.UidValidity)
@@ -93,12 +93,12 @@ let ``fetch re-seeds forward on a uidvalidity change instead of rescanning every
 let ``fetch does not skip the first message that arrives after seeding an empty mailbox`` () =
     // Tick 1: first enable against an empty mailbox seeds {validity, 0, Initialized=true}.
     let empty = FakeMailbox(7u, [])
-    let _, seeded = EmailPoller.fetch empty { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 0u
+    let _, seeded = EmailPoller.fetch empty { UidValidity = 0u; LastUid = 0u; Initialized = false } "INBOX" 0u (TimeSpan.FromHours 2.0)
     Assert.Equal(0u, seeded.LastUid)
     Assert.True(seeded.Initialized)
     // Tick 2: a message now arrives; resuming from the seeded cursor must fetch it (not skip).
     let withMail = FakeMailbox(7u, [ mkRaw 5u "<first>" ])
-    let mails, next = EmailPoller.fetch withMail seeded "INBOX" 0u
+    let mails, next = EmailPoller.fetch withMail seeded "INBOX" 0u (TimeSpan.FromHours 2.0)
     Assert.Equal(1, List.length mails)
     Assert.Equal("<first>", (List.head mails).Id)
     Assert.Equal(5u, next.LastUid)
@@ -108,7 +108,7 @@ let ``ImapMessageSource returns a buffered message and recent same-sender mail``
     let src = ImapMessageSource()
     let baseTs = DateTime(2026, 6, 15, 14, 0, 0)
     let mk id ts =
-        { (Email.toChatMessage (mkRaw 1u id)) with ChatJid = "a@b.com"; Timestamp = ts }
+        { (Email.toChatMessage (TimeSpan.FromHours 2.0) (mkRaw 1u id)) with ChatJid = "a@b.com"; Timestamp = ts }
     let older = mk "<older>" (baseTs.AddMinutes -10.0)
     let target = mk "<target>" baseTs
     src.Put older

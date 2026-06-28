@@ -214,21 +214,20 @@ module Adapters =
         let ord = reader.GetOrdinal(col)
         if reader.IsDBNull(ord) then None else Some(reader.GetInt32(ord))
 
-    // The KB records timestamps as local wall-clock in SAST (+02:00) per DESIGN §4/§8.
+    // The KB records timestamps as local wall-clock per DESIGN §4/§8.
     // Postgres timestamptz comes back as an absolute instant, so read it as an offset value
-    // and shift it into SAST before exposing it as the message DateTime — otherwise file
-    // dates and frontmatter land in UTC and near-midnight messages roll to the wrong day.
-    let internal sastOffset = System.TimeSpan.FromHours 2.0
+    // and shift it into the configured local time before exposing it as the message DateTime —
+    // otherwise file dates and frontmatter land in UTC and near-midnight messages roll to the wrong day.
 
-    let private readKbTimestamp (reader: NpgsqlDataReader) (col: string) : System.DateTime =
-        (reader.GetFieldValue<System.DateTimeOffset>(reader.GetOrdinal col)).ToOffset(sastOffset).DateTime
+    let private readKbTimestamp (offset: System.TimeSpan) (reader: NpgsqlDataReader) (col: string) : System.DateTime =
+        (reader.GetFieldValue<System.DateTimeOffset>(reader.GetOrdinal col)).ToOffset(offset).DateTime
 
-    // The reverse of readKbTimestamp: turn a SAST wall-clock DateTime back into the UTC instant
+    // The reverse of readKbTimestamp: turn a local wall-clock DateTime back into the UTC instant
     // a timestamptz query parameter needs (a cursor comparison must use the absolute instant).
-    let private toInstantParam (ts: System.DateTime) : System.DateTime =
-        System.DateTimeOffset(System.DateTime.SpecifyKind(ts, System.DateTimeKind.Unspecified), sastOffset).UtcDateTime
+    let private toInstantParam (offset: System.TimeSpan) (ts: System.DateTime) : System.DateTime =
+        System.DateTimeOffset(System.DateTime.SpecifyKind(ts, System.DateTimeKind.Unspecified), offset).UtcDateTime
 
-    let private mapChat (reader: NpgsqlDataReader) : ChatMessage =
+    let private mapChat (offset: System.TimeSpan) (reader: NpgsqlDataReader) : ChatMessage =
         { Id = reader.GetString(reader.GetOrdinal("id"))
           ChatJid = reader.GetString(reader.GetOrdinal("chat_jid"))
           ChatName = getStringOrNull reader "chat_name"
@@ -249,13 +248,14 @@ module Adapters =
           FileName = getStringOrNull reader "filename"
           AlbumId = getStringOrNull reader "album_id"
           AlbumIndex = getIntOrNone reader "album_index"
-          Timestamp = readKbTimestamp reader "timestamp" }
+          Timestamp = readKbTimestamp offset reader "timestamp" }
 
-    type PostgresMessageSource(connectionString: string) =
+    type PostgresMessageSource(connectionString: string, utcOffset: System.TimeSpan) =
         let openConnection () =
             let c = new NpgsqlConnection(connectionString)
             c.Open()
             c
+        new(connectionString: string) = PostgresMessageSource(connectionString, System.TimeSpan.FromHours 2.0)
         interface IMessageSource with
             member _.GetMessage(id, chatJid) =
                 use conn = openConnection ()
@@ -264,16 +264,16 @@ module Adapters =
                 cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
                 // F# resolves ExecuteReader() to the inherited DbDataReader overload, so an explicit downcast to NpgsqlDataReader is required
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
-                if reader.Read() then Some(mapChat reader) else None
+                if reader.Read() then Some(mapChat utcOffset reader) else None
             member _.GetRecent(chatJid, before, excludingId) =
                 use conn = openConnection ()
                 use cmd = new NpgsqlCommand(Queries.GetPreviousMessagesByChatIdAndJid, conn)
                 cmd.Parameters.AddWithValue("Id", excludingId) |> ignore
                 cmd.Parameters.AddWithValue("ChatJid", chatJid) |> ignore
-                cmd.Parameters.AddWithValue("Timestamp", toInstantParam before) |> ignore
+                cmd.Parameters.AddWithValue("Timestamp", toInstantParam utcOffset before) |> ignore
                 // F# resolves ExecuteReader() to the inherited DbDataReader overload, so an explicit downcast to NpgsqlDataReader is required
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
-                [ while reader.Read() do yield mapChat reader ]
+                [ while reader.Read() do yield mapChat utcOffset reader ]
             member _.GetMessagesSince(chatJid, since) =
                 use conn = openConnection ()
                 use cmd = new NpgsqlCommand(Queries.GetMessagesSince, conn)
@@ -282,7 +282,7 @@ module Adapters =
                 p.Value <- (match chatJid with Some j -> box j | None -> box System.DBNull.Value)
                 // F# resolves ExecuteReader() to the inherited DbDataReader overload, so the downcast is required.
                 use reader = cmd.ExecuteReader() :?> NpgsqlDataReader
-                [ while reader.Read() do yield mapChat reader ]
+                [ while reader.Read() do yield mapChat utcOffset reader ]
             member _.GetMediaBytes(id, chatJid) =
                 use conn = openConnection ()
                 use cmd = new NpgsqlCommand(Queries.GetMediaBytes, conn)

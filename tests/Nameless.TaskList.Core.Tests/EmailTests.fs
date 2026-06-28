@@ -58,7 +58,7 @@ let ``isBulk is false for an ordinary personal mail`` () =
 
 [<Fact>]
 let ``toChatMessage maps identity, platform and SAST timestamp`` () =
-    let m = Email.toChatMessage (raw ())
+    let m = Email.toChatMessage (System.TimeSpan.FromHours 2.0) (raw ())
     Assert.Equal("<m1@example.com>", m.Id)
     Assert.Equal("practice@example.com", m.ChatJid)
     Assert.Equal("Dr Naidoo Practice", m.NormalizedChatName)
@@ -72,20 +72,25 @@ let ``toChatMessage maps identity, platform and SAST timestamp`` () =
 
 [<Fact>]
 let ``toChatMessage prepends the subject to the body`` () =
-    let m = Email.toChatMessage { raw () with Subject = "Parent meeting"; TextBody = "It is on Friday." }
+    let m = Email.toChatMessage (System.TimeSpan.FromHours 2.0) { raw () with Subject = "Parent meeting"; TextBody = "It is on Friday." }
     Assert.Equal("Parent meeting\n\nIt is on Friday.", m.Content)
 
 [<Fact>]
 let ``toChatMessage with a blank subject is body only`` () =
-    let m = Email.toChatMessage { raw () with Subject = "   "; TextBody = "Just the body." }
+    let m = Email.toChatMessage (System.TimeSpan.FromHours 2.0) { raw () with Subject = "   "; TextBody = "Just the body." }
     Assert.Equal("Just the body.", m.Content.Trim())
 
 [<Fact>]
 let ``toChatMessage marks bulk mail as broadcast`` () =
-    let m = Email.toChatMessage { raw () with ListUnsubscribe = true }
+    let m = Email.toChatMessage (System.TimeSpan.FromHours 2.0) { raw () with ListUnsubscribe = true }
     Assert.True(m.IsBroadcast)
 
 [<Fact>]
 let ``toChatMessage falls back to the from address when display is blank`` () =
-    let m = Email.toChatMessage { raw () with FromDisplay = "" }
+    let m = Email.toChatMessage (System.TimeSpan.FromHours 2.0) { raw () with FromDisplay = "" }
     Assert.Equal("practice@example.com", m.NormalizedChatName)
+
+[<Fact>]
+let ``toChatMessage applies the supplied offset to the timestamp`` () =
+    let m = Email.toChatMessage (System.TimeSpan.FromHours 5.5) (raw ())
+    Assert.Equal(System.DateTime(2026, 6, 15, 17, 47, 45), m.Timestamp)
