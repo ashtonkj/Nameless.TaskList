@@ -9,6 +9,7 @@
     <ItemGroup>
         <Compile Include="Config.fs" />
         <Compile Include="Worlds.fs" />
+        <Compile Include="Dataset.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>
 
