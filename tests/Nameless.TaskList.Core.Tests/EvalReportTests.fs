@@ -35,6 +35,8 @@ let ``scorecard JSON round-trips`` () =
     let back = Report.fromJson (Report.toJson sc)
     Assert.Equal(sc.Overall, back.Overall, 6)
     Assert.Equal(sc.Model, back.Model)
+    Assert.Equal<(string * float * int) list>(sc.Steps, back.Steps)
+    Assert.Equal<(string * string * float) list>(sc.Cases, back.Cases)
 
 [<Fact>]
 let ``markdown shows baseline delta`` () =

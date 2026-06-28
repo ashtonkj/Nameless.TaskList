@@ -48,7 +48,7 @@ module Report =
         JsonSerializer.Serialize(obj, JsonSerializerOptions(JsonSerializerDefaults.Web, WriteIndented = true))
 
     let fromJson (json: string) : Scorecard =
-        let d = JsonDocument.Parse(json)
+        use d = JsonDocument.Parse(json)
         let r = d.RootElement
         { Model = r.GetProperty("model").GetString()
           Date = r.GetProperty("date").GetString()
