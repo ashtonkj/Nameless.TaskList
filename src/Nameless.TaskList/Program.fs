@@ -123,6 +123,34 @@ module Program =
                 let logger = sp.GetRequiredService<ILogger<WhatsAppListenerService>>()
                 new WhatsAppListenerService(listener, cursorStore, messages, buildListenerDeps, "whatsapp_new_message", reconnectSeconds, logger)) |> ignore
 
+        // Scheduled maintenance: register the in-app scheduler only when enabled.
+        if cfg.["Scheduler:Enabled"] = "true" then
+            builder.Services.AddHostedService<SchedulerService>(fun sp ->
+                let tasks =
+                    [ "daily-digest",  cfg.["Scheduler:DailyDigest"]
+                      "weekly-digest", cfg.["Scheduler:WeeklyDigest"]
+                      "reindex",       cfg.["Scheduler:Reindex"] ]
+                    |> List.choose (fun (name, s) ->
+                        Scheduler.parseSpec s |> Option.map (fun spec -> ({ Name = name; Spec = spec } : Scheduler.ScheduledTask)))
+                let checkSeconds = match System.Int32.TryParse(cfg.["Scheduler:CheckIntervalSeconds"]) with | true, n -> n | _ -> 60
+                let statePath = System.IO.Path.Combine(cfg.["Vault:Root"], ".taskmeister", "scheduler-state.json")
+                let stateStore = FileSystemSchedulerStateStore(statePath) :> ISchedulerStateStore
+                let vault = sp.GetRequiredService<IVault>()
+                let chat = sp.GetRequiredService<IChatClient>()
+                let logger = sp.GetRequiredService<ILogger<SchedulerService>>()
+                let enabledNames = tasks |> List.map (fun t -> t.Name) |> String.concat ", "
+                logger.LogInformation("Scheduler enabled; tasks: {Tasks}", (if enabledNames = "" then "(none)" else enabledNames))
+                let runTask (t: Scheduler.ScheduledTask) =
+                    try
+                        match t.Name with
+                        | "daily-digest"  -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.daily |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
+                        | "weekly-digest" -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.weekly |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
+                        | "reindex"       -> MaintenanceTasks.reindex cfg vault |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
+                        | other           -> logger.LogWarning("unknown scheduled task {Name}", other)
+                    with ex ->
+                        logger.LogWarning(ex, "scheduled task {Name} failed", t.Name)
+                new SchedulerService(tasks, stateStore, runTask, checkSeconds, logger)) |> ignore
+
         let app = builder.Build()
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, ITranscriber, Microsoft.AspNetCore.Http.IResult>(
@@ -136,10 +164,7 @@ module Program =
 
         app.MapPost("/reindex", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
             fun (vault: IVault) ->
-                let topicCfg : Indexer.TopicSweepConfig =
-                    { ResolvedArchiveAfterDays = (match System.Int32.TryParse(cfg.["Topics:ResolvedArchiveAfterDays"]) with | true, n -> n | _ -> 14)
-                      DormantArchiveAfterDays = (match System.Int32.TryParse(cfg.["Topics:DormantArchiveAfterDays"]) with | true, n -> n | _ -> 90) }
-                try Indexer.regenerate vault topicCfg System.DateTime.Now |> ReindexHandler.toHttp
+                try MaintenanceTasks.reindex cfg vault |> ReindexHandler.toHttp
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         app.MapGet("/relationships", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
@@ -153,10 +178,7 @@ module Program =
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         let runDigest (vault: IVault) (chat: IChatClient) (p: Digest.DigestParams) : Microsoft.AspNetCore.Http.IResult =
-            try
-                let deps : Digest.DigestDeps =
-                    { Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]; Today = System.DateTime.Now }
-                Digest.generate deps p |> DigestHandler.toHttp
+            try MaintenanceTasks.digest cfg vault chat p |> DigestHandler.toHttp
             with ex -> Results.Json({| error = ex.Message |}, statusCode = 500)
 
         app.MapPost("/digest/daily", System.Func<IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(

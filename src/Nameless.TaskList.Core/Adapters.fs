@@ -336,6 +336,22 @@ module Adapters =
                     else { UidValidity = 0u; LastUid = 0u; Initialized = false }
                 with _ -> { UidValidity = 0u; LastUid = 0u; Initialized = false }
 
+    // ---- Scheduler last-run state over a single JSON file. ----
+    type FileSystemSchedulerStateStore(path: string) =
+        interface ISchedulerStateStore with
+            member _.Save(state) =
+                let dir = Path.GetDirectoryName(path)
+                if not (String.IsNullOrEmpty dir) then Directory.CreateDirectory(dir) |> ignore
+                File.WriteAllText(path, JsonSerializer.Serialize(state))
+            member _.Load() =
+                try
+                    if File.Exists path then
+                        match JsonSerializer.Deserialize<SchedulerState>(File.ReadAllText path) with
+                        | s when not (obj.ReferenceEquals(s.LastRuns, null)) -> s
+                        | _ -> { LastRuns = System.Collections.Generic.Dictionary() }
+                    else { LastRuns = System.Collections.Generic.Dictionary() }
+                with _ -> { LastRuns = System.Collections.Generic.Dictionary() }
+
     // ---- IMAP mailbox over MailKit. Synchronous by design, like the other adapters. ----
     type MailKitMailbox(host: string, port: int, useSsl: bool, user: string, password: string) =
         let connect () =
