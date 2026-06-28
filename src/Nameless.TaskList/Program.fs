@@ -21,11 +21,13 @@ module Program =
         let builder = WebApplication.CreateBuilder(args)
         let cfg = builder.Configuration
 
+        let kbOffset = MaintenanceTasks.kbOffset cfg
+
         // Adapters as singletons behind their ports.
         builder.Services.AddSingleton<IVault>(fun _ ->
             FileSystemVault(cfg.["Vault:Root"]) :> IVault) |> ignore
         builder.Services.AddSingleton<IMessageSource>(fun _ ->
-            PostgresMessageSource(cfg.GetConnectionString("WhatsApp")) :> IMessageSource) |> ignore
+            PostgresMessageSource(cfg.GetConnectionString("WhatsApp"), kbOffset) :> IMessageSource) |> ignore
         builder.Services.AddSingleton<HttpClient>(fun _ -> new HttpClient()) |> ignore
         builder.Services.AddSingleton<IChatClient>(fun sp ->
             let http = sp.GetRequiredService<HttpClient>()
@@ -76,7 +78,7 @@ module Program =
               NoteTopK = noteTopK; NoteSimilarityFloor = noteFloor
               TaskTopK = taskTopK; TaskSimilarityFloor = taskFloor
               PeopleTopK = peopleTopK; PeopleSimilarityFloor = peopleFloor
-              Vision = vision; Transcriber = transcriber }
+              Vision = vision; Transcriber = transcriber; UtcOffset = kbOffset }
 
         // Email channel: register the IMAP poller only when enabled (off by default + in tests).
         if cfg.["Imap:Enabled"] = "true" then
@@ -101,7 +103,7 @@ module Program =
                         (sp.GetRequiredService<IVision>())
                         (sp.GetRequiredService<ITranscriber>())
                 let logger = sp.GetRequiredService<ILogger<ImapPollerService>>()
-                new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, initialBackfill, logger)) |> ignore
+                new ImapPollerService(mailbox, cursorStore, source, buildEmailDeps, folder, pollSeconds, initialBackfill, kbOffset, logger)) |> ignore
 
         // WhatsApp channel: register the LISTEN/NOTIFY listener only when enabled.
         if cfg.["WhatsApp:Listen:Enabled"] = "true" then
@@ -121,7 +123,7 @@ module Program =
                         (sp.GetRequiredService<ITranscriber>())
                 let reconnectSeconds = match System.Int32.TryParse(cfg.["WhatsApp:Listen:ReconnectSeconds"]) with | true, n -> n | _ -> 10
                 let logger = sp.GetRequiredService<ILogger<WhatsAppListenerService>>()
-                new WhatsAppListenerService(listener, cursorStore, messages, buildListenerDeps, "whatsapp_new_message", reconnectSeconds, logger)) |> ignore
+                new WhatsAppListenerService(listener, cursorStore, messages, buildListenerDeps, "whatsapp_new_message", reconnectSeconds, kbOffset, logger)) |> ignore
 
         // Scheduled maintenance: register the in-app scheduler only when enabled.
         if cfg.["Scheduler:Enabled"] = "true" then

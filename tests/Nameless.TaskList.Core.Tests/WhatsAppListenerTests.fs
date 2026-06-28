@@ -109,10 +109,10 @@ let ``runSession subscribes before catch-up, then dispatches live payloads`` () 
     let store = FakeCursorStore()
     WhatsAppListener.runSession listener store mb
         (fun id _ -> events.Add(sprintf "process:%s" id))
-        "whatsapp_new_message" (fun _ -> ()) CancellationToken.None
+        (TimeSpan.FromHours 2.0) "whatsapp_new_message" (fun _ -> ()) CancellationToken.None
     Assert.Equal<string list>(
         [ "subscribe:whatsapp_new_message"; "catchup"; "process:<a>" ], List.ofSeq events)
-    // cursor advanced to the live payload's SAST timestamp
+    // cursor advanced to the live payload's wall-clock timestamp at +02:00
     Assert.Equal(DateTime(2026, 6, 18, 10, 0, 0), store.Current.Since)
 
 [<Fact>]
@@ -129,9 +129,28 @@ let ``runSession skips an unparseable payload without dispatching or dying`` () 
     let skipped = ResizeArray<string>()
     WhatsAppListener.runSession listener store mb
         (fun id _ -> events.Add(sprintf "process:%s" id))
-        "whatsapp_new_message" (fun s -> skipped.Add s) CancellationToken.None
+        (TimeSpan.FromHours 2.0) "whatsapp_new_message" (fun s -> skipped.Add s) CancellationToken.None
     Assert.Equal<string list>([ "process:<b>" ], List.ofSeq events)   // good one still processed
     Assert.Equal(1, skipped.Count)                                    // bad one logged
+
+[<Fact>]
+let ``runSession saves cursor in the configured offset's wall-clock`` () =
+    // UTC instant: 2026-06-18T07:30:00Z  (+02:00 wall-clock: 09:30  |  +05:30 wall-clock: 13:00)
+    // The payload carries +02:00 but runSession must re-shift to the configured offset.
+    let mb =
+        { new IMessageSource with
+            member _.GetMessage(_, _) = None
+            member _.GetRecent(_, _, _) = []
+            member _.GetMessagesSince(_, _) = []
+            member _.GetMediaBytes(_, _) = None }
+    // Payload is expressed in +02:00 — its UTC equivalent is 07:30Z.
+    let listener = FakeListener([ [ payload "<x>" "2026-06-18T09:30:00+02:00" ] ], ResizeArray())
+    let store = FakeCursorStore()
+    // Run with +05:30 offset — cursor Since should be 07:30Z re-expressed as 13:00 local.
+    WhatsAppListener.runSession listener store mb
+        (fun _ _ -> ())
+        (TimeSpan.FromHours 5.5) "whatsapp_new_message" (fun _ -> ()) CancellationToken.None
+    Assert.Equal(DateTime(2026, 6, 18, 13, 0, 0), store.Current.Since)
 
 open System.IO
 open Nameless.TaskList.Core.Adapters

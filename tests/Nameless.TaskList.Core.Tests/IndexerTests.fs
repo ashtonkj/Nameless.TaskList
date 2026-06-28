@@ -139,6 +139,13 @@ let ``resolved topic exactly at the resolved threshold is archived`` () =
     Assert.Equal(Some "archived", Indexer.nextTopicStatus cfg now "resolved" (daysAgo 14))
 
 [<Fact>]
+let ``index last_updated uses the regenerate now date`` () =
+    let v = FakeVault()
+    v.Seed("topics/active/t1.md", "---\ntype: Topic\ntitle: T1\nstatus: active\nlast_updated: 2026-06-15\n---\nb")
+    Indexer.regenerate (v :> IVault) cfg (System.DateTime(2026, 7, 9, 1, 0, 0)) |> ignore
+    Assert.Contains("last_updated: 2026-07-09", v.Files.["topics/index.md"])
+
+[<Fact>]
 let ``sweepTopics archives a stale active topic and prunes it from its channel`` () =
     let vault = FakeVault()
     vault.Seed("topics/active/old-thread.md",

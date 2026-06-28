@@ -57,9 +57,8 @@ module Indexer =
                 | _ -> skipped <- skipped + 1; None)
         parsed, skipped
 
-    let private writeIndex (vault: IVault) (root: string) (title: string) (body: string) =
-        let meta : IndexMeta =
-            { Type = "Index"; Title = title; LastUpdated = System.DateTime.UtcNow.ToString("yyyy-MM-dd") }
+    let private writeIndex (vault: IVault) (root: string) (title: string) (body: string) (lastUpdated: string) =
+        let meta : IndexMeta = { Type = "Index"; Title = title; LastUpdated = lastUpdated }
         vault.Write(root.TrimEnd('/') + "/index.md", MarkdownFile.ToString (Frontmatter.serialize meta) body)
 
     let private priorityRank (p: string) =
@@ -70,7 +69,7 @@ module Indexer =
         match (nz s).ToLowerInvariant() with
         | "pending" -> 0 | "in-progress" -> 1 | "blocked" -> 2 | "done" -> 3 | "cancelled" -> 4 | _ -> 5
 
-    let private renderTasks (vault: IVault) : int * int =
+    let private renderTasks (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Task> vault "tasks"
         let sb = StringBuilder()
         items
@@ -81,13 +80,13 @@ module Indexer =
             for (path, t) in rows do
                 sb.AppendLine(sprintf "- %s — due %s · %s" (wikilink path) (nz t.Due) (joinArr t.Context)) |> ignore
             sb.AppendLine() |> ignore)
-        writeIndex vault "tasks" "Task Index" (sb.ToString().TrimEnd())
+        writeIndex vault "tasks" "Task Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length items, skipped
 
     let private topicStatusRank (s: string) =
         match (nz s).ToLowerInvariant() with "active" -> 0 | "resolved" -> 1 | _ -> 2
 
-    let private renderTopics (vault: IVault) : int * int =
+    let private renderTopics (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Topic> vault "topics"
         let sb = StringBuilder()
         items
@@ -100,17 +99,17 @@ module Indexer =
                                         (not (System.String.IsNullOrWhiteSpace lu), lu)) do
                 sb.AppendLine(sprintf "- %s — last updated %s" (wikilink path) (nz t.LastUpdated)) |> ignore
             sb.AppendLine() |> ignore)
-        writeIndex vault "topics" "Topic Index" (sb.ToString().TrimEnd())
+        writeIndex vault "topics" "Topic Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length items, skipped
 
-    let private renderChannels (vault: IVault) : int * int =
+    let private renderChannels (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Channel> vault "channels"
         let sb = StringBuilder()
         for (path, c) in items |> List.sortByDescending (fun (_, c) -> c.LastProcessed) do
             let activeCount = if isNull c.ActiveTopics then 0 else c.ActiveTopics.Length
             sb.AppendLine(sprintf "- %s — %s · last processed %s · %d active"
                               (wikilink path) (nz c.SignalWeight) (c.LastProcessed.ToString("yyyy-MM-dd")) activeCount) |> ignore
-        writeIndex vault "channels" "Channel Index" (sb.ToString().TrimEnd())
+        writeIndex vault "channels" "Channel Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length items, skipped
 
     let private whenKey (s: string) =
@@ -118,18 +117,18 @@ module Indexer =
         | true, dto -> dto.UtcDateTime
         | _ -> System.DateTime.MaxValue
 
-    let private renderEvents (vault: IVault) : int * int =
+    let private renderEvents (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Event> vault "events"
         let sb = StringBuilder()
         for (path, e) in items |> List.sortBy (fun (path, e) -> (whenKey e.When, path)) do
             sb.AppendLine(sprintf "- %s — %s · %s" (wikilink path) (nz e.When) (joinArr e.Context)) |> ignore
-        writeIndex vault "events" "Event Index" (sb.ToString().TrimEnd())
+        writeIndex vault "events" "Event Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length items, skipped
 
     let private commitmentStatusRank (s: string) =
         match (nz s).ToLowerInvariant() with "unresolved" -> 0 | "resolved" -> 1 | _ -> 2
 
-    let private renderCommitments (vault: IVault) : int * int =
+    let private renderCommitments (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Commitment> vault "commitments"
         let sb = StringBuilder()
         items
@@ -141,13 +140,13 @@ module Indexer =
                 let flag = if System.String.IsNullOrWhiteSpace c.TaskAssigned then " ⚑" else ""
                 sb.AppendLine(sprintf "- %s — due %s · %s%s" (wikilink path) (nz c.Due) (nz c.Priority) flag) |> ignore
             sb.AppendLine() |> ignore)
-        writeIndex vault "commitments" "Commitment Index" (sb.ToString().TrimEnd())
+        writeIndex vault "commitments" "Commitment Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length items, skipped
 
     let private firstContext (c: string array) =
         if isNull c || c.Length = 0 || System.String.IsNullOrWhiteSpace c.[0] then "uncategorised" else c.[0]
 
-    let private renderNotes (vault: IVault) : int * int =
+    let private renderNotes (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Note> vault "notes"
         let sb = StringBuilder()
         items
@@ -158,7 +157,7 @@ module Indexer =
             for (path, n) in rows do
                 sb.AppendLine(sprintf "- %s — %s" (wikilink path) (joinArr n.Tags)) |> ignore
             sb.AppendLine() |> ignore)
-        writeIndex vault "notes" "Notes Index" (sb.ToString().TrimEnd())
+        writeIndex vault "notes" "Notes Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length items, skipped
 
     /// Context is the directory segment: people/{ctx}/{slug}.md
@@ -166,7 +165,7 @@ module Indexer =
         let parts = path.Split('/')
         if parts.Length >= 3 then parts.[1] else "uncategorised"
 
-    let private renderPeople (vault: IVault) : int * int =
+    let private renderPeople (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Person> vault "people"
         let sb = StringBuilder()
         items
@@ -177,10 +176,10 @@ module Indexer =
             for (path, p) in rows do
                 sb.AppendLine(sprintf "- %s — %s" (wikilink path) (nz p.Role)) |> ignore
             sb.AppendLine() |> ignore)
-        writeIndex vault "people" "People Index" (sb.ToString().TrimEnd())
+        writeIndex vault "people" "People Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length items, skipped
 
-    let private renderRelationships (vault: IVault) : int * int =
+    let private renderRelationships (vault: IVault) (lastUpdated: string) : int * int =
         let items, skipped = loadAll<Relationship> vault "relationships"
         let exists (p: string) = not (System.String.IsNullOrWhiteSpace p) && vault.Exists p
         let live = items |> List.filter (fun (_, r) -> exists r.From && exists r.To)
@@ -188,7 +187,7 @@ module Indexer =
         for (path, r) in live |> List.sortBy fst do
             let desc = if System.String.IsNullOrWhiteSpace r.Descriptor then "" else sprintf " (%s)" r.Descriptor
             sb.AppendLine(sprintf "- %s — %s%s" (wikilink path) (nz r.Relation) desc) |> ignore
-        writeIndex vault "relationships" "Relationship Index" (sb.ToString().TrimEnd())
+        writeIndex vault "relationships" "Relationship Index" (sb.ToString().TrimEnd()) lastUpdated
         List.length live, skipped
 
     /// Apply the dormancy rule to every topic, persist status changes (same path, body kept),
@@ -227,15 +226,16 @@ module Indexer =
         changed
 
     let regenerate (vault: IVault) (cfg: TopicSweepConfig) (now: System.DateTime) : IndexSummary =
+        let lastUpdated = now.ToString("yyyy-MM-dd")
         sweepTopics vault cfg now |> ignore
-        let tCount, tSkip = renderTasks vault
-        let topCount, topSkip = renderTopics vault
-        let evCount, evSkip = renderEvents vault
-        let cmCount, cmSkip = renderCommitments vault
-        let nCount, nSkip = renderNotes vault
-        let pCount, pSkip = renderPeople vault
-        let chCount, chSkip = renderChannels vault
-        let relCount, relSkip = renderRelationships vault
+        let tCount, tSkip = renderTasks vault lastUpdated
+        let topCount, topSkip = renderTopics vault lastUpdated
+        let evCount, evSkip = renderEvents vault lastUpdated
+        let cmCount, cmSkip = renderCommitments vault lastUpdated
+        let nCount, nSkip = renderNotes vault lastUpdated
+        let pCount, pSkip = renderPeople vault lastUpdated
+        let chCount, chSkip = renderChannels vault lastUpdated
+        let relCount, relSkip = renderRelationships vault lastUpdated
         { Tasks = tCount; Topics = topCount; Events = evCount; Commitments = cmCount
           Notes = nCount; People = pCount; Channels = chCount; Relationships = relCount
           Skipped = tSkip + topSkip + evSkip + cmSkip + nSkip + pSkip + chSkip + relSkip }

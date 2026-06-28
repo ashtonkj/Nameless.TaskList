@@ -14,7 +14,7 @@ open Nameless.TaskList.Core.Pipeline
 type WhatsAppListenerService
     (listener: INotificationListener, cursorStore: IListenCursorStore, messages: IMessageSource,
      buildDeps: unit -> PipelineDeps, channel: string, reconnectSeconds: int,
-     logger: ILogger<WhatsAppListenerService>) =
+     utcOffset: System.TimeSpan, logger: ILogger<WhatsAppListenerService>) =
     inherit BackgroundService()
 
     override _.ExecuteAsync(stoppingToken: CancellationToken) =
@@ -25,7 +25,7 @@ type WhatsAppListenerService
                 try
                     do! Task.Run((fun () ->
                             WhatsAppListener.runSession listener cursorStore messages processOne
-                                channel (fun m -> logger.LogWarning("{Msg}", m)) stoppingToken),
+                                utcOffset channel (fun m -> logger.LogWarning("{Msg}", m)) stoppingToken),
                             stoppingToken)
                 with
                 | :? OperationCanceledException -> ()

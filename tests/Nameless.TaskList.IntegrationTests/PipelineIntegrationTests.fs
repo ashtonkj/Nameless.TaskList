@@ -35,7 +35,8 @@ let ``end-to-end processMessage against live services writes a message file`` ()
                   Vision = OllamaVision(http, Config.ollamaUrl, Config.visionModel) :> IVision
                   Transcriber =
                     WhisperTranscriber(Config.whisperCommand, Config.whisperModel, Config.whisperLanguage, Config.whisperTimeout)
-                    :> ITranscriber }
+                    :> ITranscriber
+                  UtcOffset = System.TimeSpan.FromHours 2.0 }
             match processMessage deps msg.Id msg.ChatJid with
             | LlmError e -> failwithf "pipeline returned LlmError: %s" e
             | NotFound -> failwith "pipeline returned NotFound for a real message id"

@@ -17,11 +17,18 @@ module MaintenanceTasks =
         { ResolvedArchiveAfterDays = (match Int32.TryParse(cfg.["Topics:ResolvedArchiveAfterDays"]) with | true, n -> n | _ -> 14)
           DormantArchiveAfterDays = (match Int32.TryParse(cfg.["Topics:DormantArchiveAfterDays"]) with | true, n -> n | _ -> 90) }
 
+    let kbOffset (cfg: IConfiguration) : System.TimeSpan =
+        match System.Double.TryParse(cfg.["Vault:UtcOffsetHours"]) with
+        | true, h -> System.TimeSpan.FromHours h
+        | _ -> System.TimeSpan.FromHours 2.0
+
     let reindex (cfg: IConfiguration) (vault: IVault) : Indexer.IndexSummary =
-        Indexer.regenerate vault (topicCfg cfg) DateTime.Now
+        Indexer.regenerate vault (topicCfg cfg) (KnowledgeBase.Time.now (kbOffset cfg)).DateTime
 
     let digest (cfg: IConfiguration) (vault: IVault) (chat: IChatClient) (p: Digest.DigestParams) : Digest.DigestResult =
-        Digest.generate { Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]; Today = DateTime.Now } p
+        let off = kbOffset cfg
+        Digest.generate { Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]
+                          Today = (KnowledgeBase.Time.now off).DateTime; UtcOffset = off } p
 
 /// Runs due scheduled tasks on a timer. Registered only when Scheduler:Enabled = "true".
 /// `runTask` (built in Program.fs) dispatches by task name and swallows its own failures so one

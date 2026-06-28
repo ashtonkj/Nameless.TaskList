@@ -5,9 +5,6 @@ open System.Text.RegularExpressions
 
 module Email =
 
-    // KB timestamps are SAST wall-clock (+02:00) per DESIGN §4/§8.
-    let private sastOffset = TimeSpan.FromHours 2.0
-
     /// Crude HTML→text: drop tags, collapse whitespace, decode the few common entities.
     let private htmlToText (html: string) : string =
         if String.IsNullOrWhiteSpace html then ""
@@ -58,7 +55,7 @@ module Email =
             | _ -> false)
 
     /// Map a fetched email onto the pipeline's ChatMessage shape.
-    let toChatMessage (email: RawEmail) : ChatMessage =
+    let toChatMessage (utcOffset: TimeSpan) (email: RawEmail) : ChatMessage =
         let display =
             if String.IsNullOrWhiteSpace email.FromDisplay then email.FromAddress else email.FromDisplay
         { Id = email.MessageId
@@ -79,7 +76,7 @@ module Email =
           FileName = null
           AlbumId = null
           AlbumIndex = None
-          Timestamp = email.Date.ToOffset(sastOffset).DateTime }
+          Timestamp = email.Date.ToOffset(utcOffset).DateTime }
 
 open Nameless.TaskList.Core.Ports
 
@@ -92,7 +89,7 @@ module EmailPoller =
     /// On the first run (uninitialised cursor) or a UIDVALIDITY change, the cursor is seeded
     /// FORWARD rather than scanning the whole mailbox: only the newest `initialBackfill` messages
     /// are processed (0 = go-forward only). This avoids flooding the pipeline on first enable.
-    let fetch (mailbox: IMailbox) (stored: EmailCursor) (folder: string) (initialBackfill: uint32)
+    let fetch (mailbox: IMailbox) (stored: EmailCursor) (folder: string) (initialBackfill: uint32) (utcOffset: System.TimeSpan)
         : ChatMessage list * EmailCursor =
         let validity = mailbox.UidValidity folder
         let resume = stored.Initialized && validity = stored.UidValidity
@@ -103,5 +100,5 @@ module EmailPoller =
                 if highest > initialBackfill then highest - initialBackfill else 0u
         let raws = mailbox.FetchSince(folder, since)
         let highest = raws |> List.fold (fun acc r -> max acc r.Uid) since
-        let mails = raws |> List.map Email.toChatMessage
+        let mails = raws |> List.map (Email.toChatMessage utcOffset)
         mails, { UidValidity = validity; LastUid = highest; Initialized = true }

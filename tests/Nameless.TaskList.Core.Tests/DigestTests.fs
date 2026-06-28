@@ -30,7 +30,7 @@ let private seed () =
 let private proseChat (text: string) = FakeChatClient([ Responses.final text ])
 
 let private deps (v: FakeVault) (chat: IChatClient) : DigestDeps =
-    { Vault = v :> IVault; Chat = chat; Model = "test-model"; Today = today }
+    { Vault = v :> IVault; Chat = chat; Model = "test-model"; Today = today; UtcOffset = System.TimeSpan.FromHours 2.0 }
 
 [<Fact>]
 let ``daily digest selects, counts, writes a dated note, and uses the LLM prose`` () =
@@ -83,7 +83,7 @@ let ``tied-score tasks are ordered by soonest due date ascending`` () =
     v.Seed("tasks/pending/sooner.md", "---\ntype: Task\ntitle: Zzz\nstatus: pending\npriority: medium\ndue: 2026-08-01\ncontext:\n  - medical\n---\nb")
     v.Seed("tasks/pending/later.md", "---\ntype: Task\ntitle: Aaa\nstatus: pending\npriority: medium\ndue: 2026-09-01\ncontext:\n  - medical\n---\nb")
     // FakeChatClient([]) → queue underflow → fallback body used (deterministic rendering)
-    let d = { Vault = v :> IVault; Chat = FakeChatClient([]) :> IChatClient; Model = "test-model"; Today = today }
+    let d = { Vault = v :> IVault; Chat = FakeChatClient([]) :> IChatClient; Model = "test-model"; Today = today; UtcOffset = System.TimeSpan.FromHours 2.0 }
     let r = Digest.generate d DigestParams.daily
     // Sooner due date ("Zzz", 2026-08-01) must appear before later due date ("Aaa", 2026-09-01)
     let idxZzz = r.Text.IndexOf("Zzz")
@@ -91,3 +91,10 @@ let ``tied-score tasks are ordered by soonest due date ascending`` () =
     Assert.True(idxZzz >= 0, "Expected 'Zzz' in digest text")
     Assert.True(idxAaa >= 0, "Expected 'Aaa' in digest text")
     Assert.True(idxZzz < idxAaa, sprintf "Expected 'Zzz' (sooner due) before 'Aaa' (later due), but found positions %d vs %d" idxZzz idxAaa)
+
+[<Fact>]
+let ``digest generated timestamp carries the configured offset`` () =
+    let v = seed ()
+    let d = { Vault = v :> IVault; Chat = proseChat "BODY"; Model = "m"; Today = today; UtcOffset = System.TimeSpan.FromHours 5.5 }
+    let r = Digest.generate d DigestParams.daily
+    Assert.Contains("+05:30", v.Files.[r.Path])
