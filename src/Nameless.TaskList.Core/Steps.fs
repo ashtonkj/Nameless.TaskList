@@ -221,6 +221,31 @@ module Steps =
                   Topic = input.TopicPath; TasksLinked = Array.ofList input.TaskPaths; ReminderDaysBefore = 3 }
             { Record = fb; Body = input.Intent + flag }
 
+    /// Generate a Note record+body from one intent. Mirrors the former Pipeline createNewNote +
+    /// interpretNote. Source/PeopleLinked are pipeline-owned (set from input); the model supplies
+    /// title/description/context/tags/body.
+    let createNote (chat: IChatClient) (input: GenInput) : EntityOutcome<Note> =
+        let user =
+            sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
+                input.Intent input.Raw (String.concat ", " input.Contexts) input.MessagePath
+        let stripped = stripFences (Agent.runConversation chat [] Prompts.noteCreateSystem user)
+        try
+            let parsed = MarkdownFile.FromString stripped
+            match parsed.FrontMatter with
+            | Some fm ->
+                let n = Frontmatter.deserialize<Note> fm
+                if not (System.String.IsNullOrWhiteSpace n.Title) then
+                    { Record = { n with Type = "Note"; Description = (if System.String.IsNullOrWhiteSpace n.Description then input.Intent else n.Description); Source = input.MessagePath; PeopleLinked = input.PeopleSlugs }
+                      Body = parsed.Content }
+                else raise (System.Exception("empty title"))
+            | None -> raise (System.Exception("no frontmatter"))
+        with _ ->
+            { Record =
+                { Type = "Note"; Title = input.Intent; Description = input.Intent; Context = input.Contexts
+                  PeopleLinked = input.PeopleSlugs; Tags = [||]
+                  Source = input.MessagePath; LastVerified = "" }
+              Body = input.Intent }
+
     /// Generate a Commitment record+body from one intent. Mirrors the former Pipeline commitmentSpec.
     let createCommitment (chat: IChatClient) (input: GenInput) : EntityOutcome<Commitment> =
         let user =

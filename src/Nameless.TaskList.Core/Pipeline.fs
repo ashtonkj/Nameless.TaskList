@@ -479,31 +479,15 @@ module Pipeline =
             let commitmentPaths = writeEntities deps commitmentSpec (List.ofArray classification.Entities.Commitments) |> List.distinct
 
             // --- Step: notes (durable reference only) — match an existing note and merge, else create ---
-            let interpretNote (stripped: string) (intent: string) : Note * string =
-                try
-                    let parsed = MarkdownFile.FromString stripped
-                    match parsed.FrontMatter with
-                    | Some fm ->
-                        let n = Frontmatter.deserialize<Note> fm
-                        // People linkage is pipeline-owned (slugged from the classification), like
-                        // Source — the model is unreliable here and sometimes emits tags or display
-                        // names into people_linked.
-                        if not (System.String.IsNullOrWhiteSpace n.Title) then { n with Type = "Note"; Description = (if System.String.IsNullOrWhiteSpace n.Description then intent else n.Description); Source = messagePath; PeopleLinked = peopleSlugs }, parsed.Content
-                        else raise (System.Exception("empty title"))
-                    | None -> raise (System.Exception("no frontmatter"))
-                with _ ->
-                    { Type = "Note"; Title = intent; Description = intent; Context = classification.Contexts
-                      PeopleLinked = peopleSlugs; Tags = [||]
-                      Source = messagePath; LastVerified = "" }, intent
-
             let createNewNote (intent: string) : string =
-                let raw =
-                    Agent.runConversation deps.Chat [] Prompts.noteCreateSystem
-                        (sprintf "Note intent: %s\nRaw message: %s\nContext(s): %s\nSource message file: %s"
-                            intent msg.Content (String.concat ", " classification.Contexts) messagePath)
-                let record, body = interpretNote (Steps.stripFences raw) intent
-                let text = MarkdownFile.ToString (Frontmatter.serialize record) body
-                let path = freePath deps.Vault (Naming.notePath record.Title)
+                let outcome =
+                    Steps.createNote deps.Chat
+                        { Intent = intent; Raw = msg.Content; ReferenceDate = isoTimestamp msg.Timestamp
+                          Contexts = classification.Contexts; Urgency = classification.Urgency
+                          TopicPath = ""; MessagePath = messagePath
+                          PeopleSlugs = peopleSlugs; TaskPaths = [] }
+                let text = MarkdownFile.ToString (Frontmatter.serialize outcome.Record) outcome.Body
+                let path = freePath deps.Vault (Naming.notePath outcome.Record.Title)
                 deps.Vault.Write(path, text)
                 path
 

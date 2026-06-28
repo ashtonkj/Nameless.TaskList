@@ -92,3 +92,13 @@ let ``Steps.createCommitment parses status unresolved`` () =
     let o = Steps.createCommitment (chat :> IChatClient) (genInput "Return the form")
     Assert.Equal("unresolved", o.Record.Status)
     Assert.Equal("2026-07-01", o.Record.Due)
+
+[<Fact>]
+let ``Steps.createNote parses a note and stamps source`` () =
+    let md = "---\ntype: Note\ntitle: Medical aid details\ncontext: [medical]\ntags: [insurance]\n---\n## Medical aid\nPolicy 12345.\n"
+    let chat = FakeChatClient([ Responses.final md ])
+    let o = Steps.createNote (chat :> IChatClient) (genInput "Medical aid number is 12345")
+    Assert.Equal("Medical aid details", o.Record.Title)
+    Assert.Equal<string array>([| "medical" |], o.Record.Context)
+    Assert.Equal("messages/m.md", o.Record.Source)            // linkage from input
+    Assert.Contains("Policy 12345", o.Body)
