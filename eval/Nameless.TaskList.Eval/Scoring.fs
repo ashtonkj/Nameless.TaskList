@@ -3,6 +3,7 @@ namespace Nameless.TaskList.Eval
 open System.Text.Json
 open System.Text.RegularExpressions
 open Nameless.TaskList.Core
+open Nameless.TaskList.Core.KnowledgeBase
 open Nameless.TaskList.Eval
 
 module Scoring =
@@ -115,3 +116,129 @@ module Scoring =
                 if ok then mk 1.0 (sprintf "created '%s'" title) None
                 else mk 0.0 (sprintf "created '%s', missing %A" title needles) None
             | want, got -> mk 0.0 (sprintf "wanted %s, got %A" want got) None
+
+    /// The `expected.frontmatter` object, when present.
+    let private frontmatterObj (case: Dataset.Case) : JsonElement option =
+        match case.Expected.TryGetProperty "frontmatter" with
+        | true, v when v.ValueKind = JsonValueKind.Object -> Some v
+        | _ -> None
+
+    /// Render a JSON scalar (string/bool/number) to the string form the record field compares as.
+    let private jsonScalar (v: JsonElement) : string =
+        match v.ValueKind with
+        | JsonValueKind.String -> v.GetString()
+        | JsonValueKind.True -> "true"
+        | JsonValueKind.False -> "false"
+        | _ -> v.GetRawText()
+
+    /// Score one scalar frontmatter field (exact, normalised) when the case asserts it.
+    let private scoreScalar (fm: JsonElement) (key: string) (actual: string) (fields: ResizeArray<FieldScore>) =
+        match fm.TryGetProperty key with
+        | true, v ->
+            let exp = jsonScalar v
+            let s = if norm exp = norm actual then 1.0 else 0.0
+            fields.Add { Field = key; Score = s; Detail = sprintf "exp=%s act=%s" exp actual }
+        | _ -> ()
+
+    /// Score one array frontmatter field via set-F1 when the case asserts it.
+    let private scoreArrayField (fm: JsonElement) (key: string) (actual: string array) (fields: ResizeArray<FieldScore>) =
+        match fm.TryGetProperty key with
+        | true, v when v.ValueKind = JsonValueKind.Array ->
+            let exp = [ for x in v.EnumerateArray() do if x.ValueKind = JsonValueKind.String then yield x.GetString() ]
+            let act = if isNull actual then [] else List.ofArray actual
+            fields.Add { Field = key; Score = setF1 exp act; Detail = sprintf "exp=%A act=%A" exp act }
+        | _ -> ()
+
+    /// Score a date/datetime field: equal instants (DateTimeOffset) when both parse, else exact string.
+    let private scoreDateField (fm: JsonElement) (key: string) (actual: string) (fields: ResizeArray<FieldScore>) =
+        match fm.TryGetProperty key with
+        | true, v when v.ValueKind = JsonValueKind.String ->
+            let exp = v.GetString()
+            let s =
+                match System.DateTimeOffset.TryParse exp, System.DateTimeOffset.TryParse (if isNull actual then "" else actual) with
+                | (true, a), (true, b) -> if a = b then 1.0 else 0.0
+                | _ -> if norm exp = norm actual then 1.0 else 0.0
+            fields.Add { Field = key; Score = s; Detail = sprintf "exp=%s act=%s" exp actual }
+        | _ -> ()
+
+    /// Score `titleMatches` (regex) and `bodyContains` (all substrings present) when asserted.
+    let private scoreTitleBody (case: Dataset.Case) (title: string) (body: string) (fields: ResizeArray<FieldScore>) =
+        match case.Expected.TryGetProperty "titleMatches" with
+        | true, v when v.ValueKind = JsonValueKind.String ->
+            let ok = Regex.IsMatch((if isNull title then "" else title), v.GetString())
+            fields.Add { Field = "titleMatches"; Score = (if ok then 1.0 else 0.0); Detail = sprintf "title=%s" title }
+        | _ -> ()
+        match case.Expected.TryGetProperty "bodyContains" with
+        | true, v when v.ValueKind = JsonValueKind.Array ->
+            let needles = [ for x in v.EnumerateArray() do if x.ValueKind = JsonValueKind.String then yield x.GetString() ]
+            let b = norm body
+            let ok = needles |> List.forall (fun n -> b.Contains(norm n))
+            fields.Add { Field = "bodyContains"; Score = (if ok then 1.0 else 0.0); Detail = sprintf "needles=%A" needles }
+        | _ -> ()
+
+    let private finish (case: Dataset.Case) (fields: ResizeArray<FieldScore>) : CaseResult =
+        let fl = List.ofSeq fields
+        { Id = case.Id; Step = case.Step; Tags = case.Tags
+          Score = mean (fl |> List.map (fun f -> f.Score)); Fields = fl
+          NoisePair = None; ParseError = None }
+
+    let private genError (case: Dataset.Case) (e: string) : CaseResult =
+        { Id = case.Id; Step = case.Step; Tags = case.Tags; Score = 0.0; Fields = []
+          NoisePair = None; ParseError = Some e }
+
+    let scoreTask (case: Dataset.Case) (result: Result<Steps.EntityOutcome<Task>, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok o ->
+            let t = o.Record
+            let fields = ResizeArray<FieldScore>()
+            frontmatterObj case |> Option.iter (fun fm ->
+                scoreScalar fm "status" t.Status fields
+                scoreScalar fm "priority" t.Priority fields
+                scoreArrayField fm "context" t.Context fields
+                scoreDateField fm "due" t.Due fields)
+            scoreTitleBody case t.Title o.Body fields
+            finish case fields
+
+    let scoreEvent (case: Dataset.Case) (result: Result<Steps.EntityOutcome<Event>, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok o ->
+            let e = o.Record
+            let fields = ResizeArray<FieldScore>()
+            frontmatterObj case |> Option.iter (fun fm ->
+                scoreScalar fm "all_day" (string e.AllDay) fields
+                scoreScalar fm "location" e.Location fields
+                scoreScalar fm "reminder_days_before" (string e.ReminderDaysBefore) fields
+                scoreArrayField fm "context" e.Context fields
+                scoreDateField fm "when" e.When fields)
+            scoreTitleBody case e.Title o.Body fields
+            finish case fields
+
+    let scoreCommitment (case: Dataset.Case) (result: Result<Steps.EntityOutcome<Commitment>, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok o ->
+            let c = o.Record
+            let fields = ResizeArray<FieldScore>()
+            frontmatterObj case |> Option.iter (fun fm ->
+                scoreScalar fm "status" c.Status fields
+                scoreScalar fm "priority" c.Priority fields
+                scoreScalar fm "task_assigned" c.TaskAssigned fields
+                scoreScalar fm "escalate_after_days" (string c.EscalateAfterDays) fields
+                scoreArrayField fm "context" c.Context fields
+                scoreDateField fm "due" c.Due fields)
+            scoreTitleBody case c.Title o.Body fields
+            finish case fields
+
+    let scoreNote (case: Dataset.Case) (result: Result<Steps.EntityOutcome<Note>, string>) : CaseResult =
+        match result with
+        | Error e -> genError case e
+        | Ok o ->
+            let n = o.Record
+            let fields = ResizeArray<FieldScore>()
+            frontmatterObj case |> Option.iter (fun fm ->
+                scoreArrayField fm "context" n.Context fields
+                scoreArrayField fm "tags" n.Tags fields)
+            scoreTitleBody case n.Title o.Body fields
+            finish case fields
