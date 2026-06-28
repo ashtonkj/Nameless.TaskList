@@ -9,8 +9,8 @@
     "message": "Reminder: swimming registration closes Friday 3 July, don't miss it!"
   },
   "expected": {
-    "frontmatter": { "status": "pending", "title": "Sign up Ethan for swimming" },
+    "frontmatter": { "status": "pending", "priority": "high", "title": "Sign up Ethan for swimming" },
     "titleMatches": "[Ss]wimming",
-    "bodyContains": ["swimming"]
+    "bodyContains": ["Friday"]
   }
 }
