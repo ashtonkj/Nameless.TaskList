@@ -338,6 +338,25 @@ module Steps =
         let queryText = sprintf "%s\n%s" name (String.concat ", " contexts)
         shortlistAndConfirm chat embedder queryText existingPeople floor topK Prompts.personMatchSystem buildPayload
 
+    /// Run the task-update prompt and parse the model's merged task. Ok = parsed record+body;
+    /// Error carries the stripped raw reply (the pipeline falls back to the OLD record + that raw
+    /// body on Error, preserving today's behaviour). Never throws on bad model output.
+    let updateTask (chat: IChatClient) (existingFile: string) (intent: string) (raw: string) : Result<EntityOutcome<Task>, string> =
+        let updatedRaw =
+            Agent.runConversation chat [] Prompts.taskUpdateSystem (Prompts.taskUpdateUser existingFile intent raw)
+            |> stripFences
+        try
+            let parsed = MarkdownFile.FromString updatedRaw
+            match parsed.FrontMatter with
+            | Some nfm -> Ok { Record = Frontmatter.deserialize<Task> nfm; Body = parsed.Content }
+            | None -> Error updatedRaw
+        with _ -> Error updatedRaw
+
+    /// Run the note-update prompt; returns the model's updated body (noteUpdateSystem emits body-only).
+    let updateNote (chat: IChatClient) (existingBody: string) (intent: string) (raw: string) : string =
+        Agent.runConversation chat [] Prompts.noteUpdateSystem (Prompts.noteUpdateUser existingBody intent raw)
+        |> stripFences
+
     /// Generate a Commitment record+body from one intent. Mirrors the former Pipeline commitmentSpec.
     let createCommitment (chat: IChatClient) (input: GenInput) : EntityOutcome<Commitment> =
         let user =

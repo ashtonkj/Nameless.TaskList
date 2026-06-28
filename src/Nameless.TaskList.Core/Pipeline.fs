@@ -357,18 +357,10 @@ module Pipeline =
                         match existing.FrontMatter with
                         | Some fm ->
                             let t = Frontmatter.deserialize<Task> fm
-                            let updatedRaw =
-                                Agent.runConversation deps.Chat [] Prompts.taskUpdateSystem
-                                    (Prompts.taskUpdateUser existingRaw intent msg.Content)
-                                |> Steps.stripFences
-                            // Parse the model's updated task; fall back to old record + raw body on failure.
                             let newRec, newBody =
-                                try
-                                    let parsed = MarkdownFile.FromString updatedRaw
-                                    match parsed.FrontMatter with
-                                    | Some nfm -> Frontmatter.deserialize<Task> nfm, parsed.Content
-                                    | None -> t, updatedRaw
-                                with _ -> t, updatedRaw
+                                match Steps.updateTask deps.Chat existingRaw intent msg.Content with
+                                | Ok o -> o.Record, o.Body
+                                | Error raw -> t, raw
                             let prank (p: string) =
                                 match (if isNull p then "" else p).ToLowerInvariant() with
                                 | "critical" -> 3 | "high" -> 2 | "medium" -> 1 | "low" -> 0 | _ -> -1
@@ -451,10 +443,7 @@ module Pipeline =
                         match existing.FrontMatter with
                         | Some fm ->
                             let n = Frontmatter.deserialize<Note> fm
-                            let mergedBody =
-                                Agent.runConversation deps.Chat [] Prompts.noteUpdateSystem
-                                    (Prompts.noteUpdateUser existing.Content intent msg.Content)
-                                |> Steps.stripFences
+                            let mergedBody = Steps.updateNote deps.Chat existing.Content intent msg.Content
                             let merged =
                                 { n with
                                     LastVerified = isoTimestamp msg.Timestamp
