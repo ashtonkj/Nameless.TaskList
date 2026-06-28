@@ -14,7 +14,7 @@ module Digest =
         static member weekly = { Kind = Weekly; WindowDays = 14; TopN = 10 }
 
     type DigestDeps =
-        { Vault: IVault; Chat: IChatClient; Model: string; Today: System.DateTime }
+        { Vault: IVault; Chat: IChatClient; Model: string; Today: System.DateTime; UtcOffset: System.TimeSpan }
 
     type DigestResult =
         { Path: string; Text: string
@@ -134,7 +134,7 @@ module Digest =
         let path = Naming.digestPath deps.Today kind
         let record : Digest =
             { Type = "Digest"; Title = sprintf "%s digest %s" kind (deps.Today.ToString("yyyy-MM-dd"))
-              Kind = kind; Generated = deps.Today.ToString("yyyy-MM-ddTHH:mm:sszzz") }
+              Kind = kind; Generated = Time.iso deps.UtcOffset deps.Today }
         deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize record) body)
 
         { Path = path; Text = body
