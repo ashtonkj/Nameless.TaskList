@@ -33,6 +33,7 @@
         <Compile Include="EvalWorldsTests.fs" />
         <Compile Include="EvalDatasetTests.fs" />
         <Compile Include="EvalScoringTests.fs" />
+        <Compile Include="EvalReportTests.fs" />
     </ItemGroup>
 
     <ItemGroup>

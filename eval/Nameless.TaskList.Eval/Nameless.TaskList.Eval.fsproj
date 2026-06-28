@@ -11,6 +11,7 @@
         <Compile Include="Worlds.fs" />
         <Compile Include="Dataset.fs" />
         <Compile Include="Scoring.fs" />
+        <Compile Include="Report.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>
 
