@@ -13,6 +13,7 @@
         <Compile Include="Scoring.fs" />
         <Compile Include="Report.fs" />
         <Compile Include="Runner.fs" />
+        <Compile Include="Args.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>
 
