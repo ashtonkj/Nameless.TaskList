@@ -663,7 +663,7 @@ let ``isAutomatedNoise matches TAP gate codes but not ordinary messages`` () =
 
 [<Fact>]
 let ``stripEndearments removes pet names but keeps real names`` () =
-    let out = Pipeline.stripEndearments [| "Pookie"; "Dr Greef"; " babe "; "Nancy"; "LOVE" |]
+    let out = Steps.stripEndearments [| "Pookie"; "Dr Greef"; " babe "; "Nancy"; "LOVE" |]
     Assert.Equal<string array>([| "Dr Greef"; "Nancy" |], out)
 
 [<Fact>]

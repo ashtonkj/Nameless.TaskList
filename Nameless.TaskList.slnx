@@ -12,4 +12,7 @@
     <Project Path="tests/Nameless.TaskList.Tests/Nameless.TaskList.Tests.fsproj" />
     <Project Path="tests/Nameless.TaskList.IntegrationTests/Nameless.TaskList.IntegrationTests.fsproj" />
   </Folder>
+  <Folder Name="/eval/">
+    <Project Path="eval/Nameless.TaskList.Eval/Nameless.TaskList.Eval.fsproj" />
+  </Folder>
 </Solution>

@@ -8,6 +8,7 @@
     <ItemGroup>
         <Compile Include="Fakes.fs" />
         <Compile Include="PromptsTests.fs" />
+        <Compile Include="StepsTests.fs" />
         <Compile Include="NamingTests.fs" />
         <Compile Include="CodecTests.fs" />
         <Compile Include="WireTests.fs" />
@@ -29,6 +30,13 @@
         <Compile Include="SimilarityTests.fs" />
         <Compile Include="BulkProcessorTests.fs" />
         <Compile Include="JobStoreTests.fs" />
+        <Compile Include="EvalWorldsTests.fs" />
+        <Compile Include="EvalDatasetTests.fs" />
+        <Compile Include="EvalScoringTests.fs" />
+        <Compile Include="EvalReportTests.fs" />
+        <Compile Include="EvalRunnerTests.fs" />
+        <Compile Include="EvalArgsTests.fs" />
+        <Compile Include="EvalDatasetIntegrityTests.fs" />
     </ItemGroup>
 
     <ItemGroup>
@@ -39,6 +47,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Nameless.TaskList.Core\Nameless.TaskList.Core.fsproj" />
+        <ProjectReference Include="..\..\eval\Nameless.TaskList.Eval\Nameless.TaskList.Eval.fsproj" />
     </ItemGroup>
 
 </Project>

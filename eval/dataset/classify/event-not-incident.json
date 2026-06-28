@@ -1,0 +1,8 @@
+{
+  "id": "event-not-incident",
+  "step": "classify",
+  "tags": ["event-not-incident"],
+  "world": "ashford-family",
+  "input": { "message": "Heads up: the 13th Street gate motor failed again last night and security had to let cars in manually.", "referenceDate": "2026-06-24" },
+  "expected": { "noise": false, "events": [], "tasks": [] }
+}

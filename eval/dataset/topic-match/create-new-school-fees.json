@@ -1,0 +1,8 @@
+{
+  "id": "create-new-school-fees",
+  "step": "topic-match",
+  "tags": ["distinct-subject"],
+  "world": "ashford-family",
+  "input": { "intent": "Reminder that term 3 school fees are due at the end of the month." },
+  "expected": { "decision": "create", "titleContains": ["fees"] }
+}

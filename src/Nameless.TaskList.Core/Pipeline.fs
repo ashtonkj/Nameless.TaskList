@@ -32,18 +32,6 @@ module Pipeline =
 
     let private isoTimestamp (ts: System.DateTime) = ts.ToString("yyyy-MM-ddTHH:mm:sszzz")
 
-    /// Terms of endearment / pet names a partner uses ("hey pookie") are not identifiable
-    /// people — left in, they spawn a junk person file. Drop them from a mentions list.
-    let private endearments =
-        set [ "pookie"; "babe"; "baby"; "bae"; "boo"; "hun"; "hon"; "honey"; "sweetie"
-              "sweetheart"; "sweetpea"; "love"; "lovey"; "lovie"; "darling"; "dear"; "dearest"
-              "hubby"; "wifey"; "snookums"; "cutie"; "pumpkin"; "sugar"; "my love"; "my dear"
-              "my darling"; "my dear wife"; "my dear husband" ]
-    let stripEndearments (people: string array) : string array =
-        if isNull people then [||]
-        else people |> Array.filter (fun p ->
-            not (endearments.Contains((if isNull p then "" else p).Trim().ToLowerInvariant())))
-
     /// Automated estate gate-access codes ("... TAP exit 19678 valid for 1 exit till ...") are
     /// one-time machine messages — pure noise whichever direction they travel. The model insists
     /// on topic-ing them, so match them by shape and skip classification entirely. Add further
@@ -182,22 +170,6 @@ module Pipeline =
                 MessageCount = current.MessageCount + 1
                 ActiveTopics = activeTopics }
         deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize updated) body)
-
-    /// Extract the "## Current understanding" section of a topic body (fallback: whole body).
-    let private understandingOf (body: string) =
-        let b = if isNull body then "" else body
-        let marker = "## Current understanding"
-        let i = b.IndexOf(marker)
-        if i < 0 then b.Trim()
-        else
-            let after = b.Substring(i + marker.Length)
-            let next = after.IndexOf("\n## ")
-            (if next < 0 then after else after.Substring(0, next)).Trim()
-
-    /// A concise topic title derived from an intent (used only by the clearly-new fast path).
-    let private titleFromIntent (intent: string) =
-        let s = (if isNull intent then "" else intent).Trim()
-        if s.Length <= 60 then s else s.Substring(0, 60).Trim()
 
     /// Find a collision-free path by inserting -2, -3, ... before the ".md" extension.
     // Precondition: basePath ends in ".md" (all Naming.*Path helpers satisfy this).
@@ -354,19 +326,13 @@ module Pipeline =
             let recent = try deps.Messages.GetRecent(chatJid, msg.Timestamp, id) with _ -> []
             let historyText = Prompts.renderHistory recent
 
-            // --- Step: classify (tool-enabled, may call get_contexts) ---
-            let classifyTools = [ Tools.getContexts deps.Vault; Tools.getPeople deps.Vault; Tools.getRelationships deps.Vault ]
-            let classifyReply =
-                Agent.runConversation deps.Chat classifyTools Prompts.classifySystem (Prompts.classifyUser historyText msg.Content)
-            match Prompts.parseClassification classifyReply with
-            | Error e ->
+            // --- Step: classify (tool-enabled; endearment-strip applied inside) ---
+            match Steps.classify deps.Chat deps.Vault historyText msg.Content with
+            | Error err ->
                 eprintfn "[classify-error] msg=%s chat=%s: %s\n  raw model output: %s"
-                    id chatJid e ((if isNull classifyReply then "<null>" else classifyReply.Trim()).Replace("\n", " "))
-                LlmError e
+                    id chatJid err.Message (err.Raw.Trim().Replace("\n", " "))
+                LlmError err.Message
             | Ok classification ->
-
-            // Drop terms of endearment the model mistakes for named people.
-            let classification = { classification with PeopleMentioned = stripEndearments classification.PeopleMentioned }
 
             if classification.Noise then
                 // Minimal message record, then stop.
@@ -401,7 +367,7 @@ module Pipeline =
                 else a |> Array.map Naming.slug |> Array.filter (fun s -> s <> "") |> Array.distinct
             let peopleSlugs = slugifyPeople classification.PeopleMentioned
 
-            // --- Step: topic match (embedding shortlist + LLM confirm; fallback to tool-enabled) ---
+            // --- Helper: create a new topic file from a title (used by the topic-match decision below) ---
             let createNewTopic (title: string) =
                 let slug = Naming.slug title
                 let topicRecord : Topic =
@@ -414,77 +380,17 @@ module Pipeline =
                 deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
                 slug, Naming.topicPath slug
 
-            // Active topics: (slug, title, understanding) — archived topics are excluded.
-            // topicFiles tracks whether any topic files exist at all (for the shortlist fallback decision).
-            let topicFiles = deps.Vault.ListFiles "topics/active"
-            let activeTopics =
-                topicFiles
-                |> List.choose (fun path ->
-                    try
-                        let mf = MarkdownFile.FromString (deps.Vault.Read path)
-                        match mf.FrontMatter with
-                        | Some fm ->
-                            let t = Frontmatter.deserialize<Topic> fm
-                            if (if isNull t.Status then "active" else t.Status).Trim().ToLowerInvariant() = "archived" then None
-                            else Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, understandingOf mf.Content)
-                        | None -> None
-                    with _ -> None)
-
-            // Embedding shortlist: Some candidates (possibly empty) when embedding works; None to fall back.
-            // Use None (tool-enabled fallback) only when there are no topic files at all.
-            // When files exist but all are archived, treat as empty candidate set (fast new-topic path).
-            let shortlist =
-                if List.isEmpty topicFiles then None
-                elif List.isEmpty activeTopics then Some []
-                else
-                    try
-                        let intentVec = deps.Embedder.Embed classification.Intent
-                        activeTopics
-                        |> List.map (fun (slug, title, und) ->
-                            let score = Similarity.cosine intentVec (deps.Embedder.Embed (title + "\n" + und))
-                            (slug, title, und, score))
-                        |> List.filter (fun (_, _, _, s) -> s >= deps.SimilarityFloor)
-                        |> List.sortByDescending (fun (_, _, _, s) -> s)
-                        |> List.truncate deps.TopK
-                        |> Some
-                    with _ -> None
-
-            let topicOutcome : Result<string * string * bool, string> =
-                match shortlist with
-                | Some [] ->
-                    // clearly new — skip the LLM topic-match call
-                    let (s, p) = createNewTopic (titleFromIntent classification.Intent) in Ok (s, p, true)
-                | Some candidates ->
-                    let candidateText =
-                        candidates
-                        |> List.map (fun (slug, title, und, _) -> sprintf "slug: %s\ntitle: %s\nunderstanding: %s" slug title und)
-                        |> String.concat "\n\n"
-                    let payload = sprintf "New message intent: %s\n\nCandidate topics:\n%s" classification.Intent candidateText
-                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.topicMatchSystem payload) with
-                    | Error e -> Error e
-                    | Ok m ->
-                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
-                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
-                        match m.Match, matched with
-                        | true, Some (slug, _, _, _) -> Ok (slug, Naming.topicPath slug, false)
-                        | _ ->
-                            let title = if System.String.IsNullOrWhiteSpace m.NewTopicTitle then titleFromIntent classification.Intent else m.NewTopicTitle
-                            let (s, p) = createNewTopic title in Ok (s, p, true)
-                | None ->
-                    // fallback: today's tool-enabled match over all active topics
-                    let topicTools = [ Tools.getTopics deps.Vault; Tools.getTopic deps.Vault ]
-                    let reply = Agent.runConversation deps.Chat topicTools Prompts.topicMatchSystem (sprintf "New message intent: %s" classification.Intent)
-                    match Prompts.parseTopicMatch reply with
-                    | Error e -> Error e
-                    | Ok m ->
-                        if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug, false)
-                        else let (s, p) = createNewTopic m.NewTopicTitle in Ok (s, p, true)
-
-            match topicOutcome with
+            // --- Step: topic match (shared with the eval harness) ---
+            match Steps.matchTopic deps.Chat deps.Embedder deps.Vault deps.TopK deps.SimilarityFloor classification.Intent with
             | Error e ->
                 eprintfn "[topic-match-error] msg=%s chat=%s: %s" id chatJid e
                 LlmError e
-            | Ok (_, topicPath, isNewTopic) ->
+            | Ok decision ->
+
+            let topicPath, isNewTopic =
+                match decision with
+                | Steps.MatchExisting slug -> Naming.topicPath slug, false
+                | Steps.CreateTopic title -> let (_, p) = createNewTopic title in p, true
 
             // --- Step: create task files via the shared entity writer ---
             let taskSpec : EntitySpec<Task> =

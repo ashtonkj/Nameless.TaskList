@@ -1,0 +1,8 @@
+{
+  "id": "person-discipline",
+  "step": "classify",
+  "tags": ["person-discipline"],
+  "world": "ashford-family",
+  "input": { "message": "Hey babe, can you ask Sarah to confirm the dentist time? The JOC said the road will be closed.", "referenceDate": "2026-06-24" },
+  "expected": { "noise": false, "people": ["Sarah"] }
+}

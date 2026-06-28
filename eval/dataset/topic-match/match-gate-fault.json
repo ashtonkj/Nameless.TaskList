@@ -1,0 +1,8 @@
+{
+  "id": "match-gate-fault",
+  "step": "topic-match",
+  "tags": ["follow-up-same-incident"],
+  "world": "ashford-family",
+  "input": { "intent": "The 13th Street gate motor is slow and grinding again today." },
+  "expected": { "decision": "match", "slug": "13th-street-gate-fault" }
+}
