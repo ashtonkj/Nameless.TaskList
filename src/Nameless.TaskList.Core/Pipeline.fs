@@ -171,22 +171,6 @@ module Pipeline =
                 ActiveTopics = activeTopics }
         deps.Vault.Write(path, MarkdownFile.ToString (Frontmatter.serialize updated) body)
 
-    /// Extract the "## Current understanding" section of a topic body (fallback: whole body).
-    let private understandingOf (body: string) =
-        let b = if isNull body then "" else body
-        let marker = "## Current understanding"
-        let i = b.IndexOf(marker)
-        if i < 0 then b.Trim()
-        else
-            let after = b.Substring(i + marker.Length)
-            let next = after.IndexOf("\n## ")
-            (if next < 0 then after else after.Substring(0, next)).Trim()
-
-    /// A concise topic title derived from an intent (used only by the clearly-new fast path).
-    let private titleFromIntent (intent: string) =
-        let s = (if isNull intent then "" else intent).Trim()
-        if s.Length <= 60 then s else s.Substring(0, 60).Trim()
-
     /// Find a collision-free path by inserting -2, -3, ... before the ".md" extension.
     // Precondition: basePath ends in ".md" (all Naming.*Path helpers satisfy this).
     let private freePath (vault: IVault) (basePath: string) =
@@ -396,77 +380,17 @@ module Pipeline =
                 deps.Vault.Write(Naming.topicPath slug, MarkdownFile.ToString (Frontmatter.serialize topicRecord) body)
                 slug, Naming.topicPath slug
 
-            // Active topics: (slug, title, understanding) — archived topics are excluded.
-            // topicFiles tracks whether any topic files exist at all (for the shortlist fallback decision).
-            let topicFiles = deps.Vault.ListFiles "topics/active"
-            let activeTopics =
-                topicFiles
-                |> List.choose (fun path ->
-                    try
-                        let mf = MarkdownFile.FromString (deps.Vault.Read path)
-                        match mf.FrontMatter with
-                        | Some fm ->
-                            let t = Frontmatter.deserialize<Topic> fm
-                            if (if isNull t.Status then "active" else t.Status).Trim().ToLowerInvariant() = "archived" then None
-                            else Some (System.IO.Path.GetFileNameWithoutExtension(path), t.Title, understandingOf mf.Content)
-                        | None -> None
-                    with _ -> None)
-
-            // Embedding shortlist: Some candidates (possibly empty) when embedding works; None to fall back.
-            // Use None (tool-enabled fallback) only when there are no topic files at all.
-            // When files exist but all are archived, treat as empty candidate set (fast new-topic path).
-            let shortlist =
-                if List.isEmpty topicFiles then None
-                elif List.isEmpty activeTopics then Some []
-                else
-                    try
-                        let intentVec = deps.Embedder.Embed classification.Intent
-                        activeTopics
-                        |> List.map (fun (slug, title, und) ->
-                            let score = Similarity.cosine intentVec (deps.Embedder.Embed (title + "\n" + und))
-                            (slug, title, und, score))
-                        |> List.filter (fun (_, _, _, s) -> s >= deps.SimilarityFloor)
-                        |> List.sortByDescending (fun (_, _, _, s) -> s)
-                        |> List.truncate deps.TopK
-                        |> Some
-                    with _ -> None
-
-            let topicOutcome : Result<string * string * bool, string> =
-                match shortlist with
-                | Some [] ->
-                    // clearly new — skip the LLM topic-match call
-                    let (s, p) = createNewTopic (titleFromIntent classification.Intent) in Ok (s, p, true)
-                | Some candidates ->
-                    let candidateText =
-                        candidates
-                        |> List.map (fun (slug, title, und, _) -> sprintf "slug: %s\ntitle: %s\nunderstanding: %s" slug title und)
-                        |> String.concat "\n\n"
-                    let payload = sprintf "New message intent: %s\n\nCandidate topics:\n%s" classification.Intent candidateText
-                    match Prompts.parseTopicMatch (Agent.runConversation deps.Chat [] Prompts.topicMatchSystem payload) with
-                    | Error e -> Error e
-                    | Ok m ->
-                        let normalized = (if isNull m.TopicSlug then "" else m.TopicSlug).Trim().ToLowerInvariant()
-                        let matched = candidates |> List.tryFind (fun (s, _, _, _) -> s.ToLowerInvariant() = normalized)
-                        match m.Match, matched with
-                        | true, Some (slug, _, _, _) -> Ok (slug, Naming.topicPath slug, false)
-                        | _ ->
-                            let title = if System.String.IsNullOrWhiteSpace m.NewTopicTitle then titleFromIntent classification.Intent else m.NewTopicTitle
-                            let (s, p) = createNewTopic title in Ok (s, p, true)
-                | None ->
-                    // fallback: today's tool-enabled match over all active topics
-                    let topicTools = [ Tools.getTopics deps.Vault; Tools.getTopic deps.Vault ]
-                    let reply = Agent.runConversation deps.Chat topicTools Prompts.topicMatchSystem (sprintf "New message intent: %s" classification.Intent)
-                    match Prompts.parseTopicMatch reply with
-                    | Error e -> Error e
-                    | Ok m ->
-                        if m.Match && not (System.String.IsNullOrWhiteSpace m.TopicSlug) then Ok (m.TopicSlug, Naming.topicPath m.TopicSlug, false)
-                        else let (s, p) = createNewTopic m.NewTopicTitle in Ok (s, p, true)
-
-            match topicOutcome with
+            // --- Step: topic match (shared with the eval harness) ---
+            match Steps.matchTopic deps.Chat deps.Embedder deps.Vault deps.TopK deps.SimilarityFloor classification.Intent with
             | Error e ->
                 eprintfn "[topic-match-error] msg=%s chat=%s: %s" id chatJid e
                 LlmError e
-            | Ok (_, topicPath, isNewTopic) ->
+            | Ok decision ->
+
+            let topicPath, isNewTopic =
+                match decision with
+                | Steps.MatchExisting slug -> Naming.topicPath slug, false
+                | Steps.CreateTopic title -> let (_, p) = createNewTopic title in p, true
 
             // --- Step: create task files via the shared entity writer ---
             let taskSpec : EntitySpec<Task> =
