@@ -359,6 +359,22 @@ module Adapters =
                     else { LastRuns = System.Collections.Generic.Dictionary() }
                 with _ -> { LastRuns = System.Collections.Generic.Dictionary() }
 
+    // ---- Embedding cache over a single JSON file. ----
+    type FileSystemEmbeddingCacheStore(path: string) =
+        interface IEmbeddingCacheStore with
+            member _.Save(state) =
+                let dir = Path.GetDirectoryName(path)
+                if not (String.IsNullOrEmpty dir) then Directory.CreateDirectory(dir) |> ignore
+                File.WriteAllText(path, JsonSerializer.Serialize(state))
+            member _.Load() =
+                try
+                    if File.Exists path then
+                        match JsonSerializer.Deserialize<EmbeddingCacheState>(File.ReadAllText path) with
+                        | s when not (obj.ReferenceEquals(s.Entries, null)) -> s
+                        | _ -> { Model = ""; Entries = [||] }
+                    else { Model = ""; Entries = [||] }
+                with _ -> { Model = ""; Entries = [||] }
+
     // ---- IMAP mailbox over MailKit. Synchronous by design, like the other adapters. ----
     type MailKitMailbox(host: string, port: int, useSsl: bool, user: string, password: string) =
         let connect () =

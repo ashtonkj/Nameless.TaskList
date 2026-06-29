@@ -205,3 +205,13 @@ type ListenCursor = { Since: System.DateTime }
 
 /// Per-task last-run timestamps for the in-app scheduler. Serialized to JSON — keep public.
 type SchedulerState = { LastRuns: System.Collections.Generic.Dictionary<string, System.DateTime> }
+
+/// One persisted embedding-cache entry: the content key (SHA-256 hex) and its vector.
+/// Serialized to JSON — keep public.
+[<CLIMutable>]
+type EmbeddingCacheEntry = { Key: string; Vector: float[] }
+
+/// The persisted embedding cache: the embed model the vectors were produced with (a model
+/// change invalidates the file) plus the entries, most-recently-used first. JSON — keep public.
+[<CLIMutable>]
+type EmbeddingCacheState = { Model: string; Entries: EmbeddingCacheEntry[] }

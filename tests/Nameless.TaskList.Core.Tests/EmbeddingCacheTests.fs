@@ -57,3 +57,38 @@ let ``capacity is clamped to at least 1`` () =
     c.Set("a", [| 1.0 |])
     c.Set("b", [| 2.0 |])
     Assert.Equal(1, c.Count)
+
+open System.IO
+open Nameless.TaskList.Core.Adapters
+open Nameless.TaskList.Core.Ports
+
+[<Fact>]
+let ``FileSystemEmbeddingCacheStore round-trips state through a JSON file`` () =
+    let path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "embedding-cache.json")
+    let store = FileSystemEmbeddingCacheStore(path) :> IEmbeddingCacheStore
+    let state =
+        { Model = "nomic-embed-text"
+          Entries = [| { Key = "k1"; Vector = [| 0.1; 0.2 |] }
+                       { Key = "k2"; Vector = [| 0.3 |] } |] }
+    store.Save state
+    let loaded = store.Load()
+    Assert.Equal("nomic-embed-text", loaded.Model)
+    Assert.Equal(2, loaded.Entries.Length)
+    Assert.Equal("k1", loaded.Entries.[0].Key)
+    Assert.Equal<float[]>([| 0.1; 0.2 |], loaded.Entries.[0].Vector)
+
+[<Fact>]
+let ``FileSystemEmbeddingCacheStore Load returns empty state when the file is missing`` () =
+    let path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "nope.json")
+    let store = FileSystemEmbeddingCacheStore(path) :> IEmbeddingCacheStore
+    let loaded = store.Load()
+    Assert.Equal("", loaded.Model)
+    Assert.Empty(loaded.Entries)
+
+[<Fact>]
+let ``FileSystemEmbeddingCacheStore Load returns empty state on a corrupt file`` () =
+    let path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName())
+    Directory.CreateDirectory(Path.GetDirectoryName(path)) |> ignore
+    File.WriteAllText(path, "{ not json")
+    let store = FileSystemEmbeddingCacheStore(path) :> IEmbeddingCacheStore
+    Assert.Empty((store.Load()).Entries)
