@@ -30,7 +30,7 @@ type private FakeVault() =
             | true, content when not (files.ContainsKey dst) ->
                 files.Remove src |> ignore
                 files.[dst] <- content
-            | _ -> ()
+            | _ -> ()   // src missing or dst exists -> no-op
 
 // Verifies the result-to-HTTP mapping (spec §8.2) without a live host.
 // ASP.NET 10's IResult.ExecuteAsync requires RequestServices with logging + routing.

@@ -24,7 +24,7 @@ module Worlds =
                 | true, content when not (files.ContainsKey dst) ->
                     files.Remove src |> ignore
                     files.[dst] <- content
-                | _ -> ()
+                | _ -> ()   // src missing or dst exists -> no-op
 
     /// Read every *.md under `worldDir` into (vault-relative path, content). The vault-relative
     /// path is the path under the world root with '\' normalised to '/'.

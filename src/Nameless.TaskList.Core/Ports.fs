@@ -20,7 +20,9 @@ type IVault =
     abstract member ListFilesRecursive : relDir: string -> string list
     /// Move a file from one vault-relative path to another, preserving its bytes. Never deletes
     /// data: src missing -> no-op; dst already exists -> no-op (never overwrite); otherwise the
-    /// bytes move src -> dst and src is vacated.
+    /// bytes move src -> dst and src is vacated. Returns unit and gives NO success signal: a caller
+    /// that needs to know whether the move occurred (e.g. an active->active re-file where dst may
+    /// already exist) must check `Exists dst` / `Exists src` itself first.
     abstract member Relocate : src: string * dst: string -> unit
 
 /// One round-trip to the chat model. messages and tools are pre-serialized objects.
