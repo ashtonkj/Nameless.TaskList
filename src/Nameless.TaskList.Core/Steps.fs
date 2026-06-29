@@ -251,7 +251,7 @@ module Steps =
     /// takes the top topK, then asks the model (systemPrompt over buildPayload displayLines) to
     /// confirm a match and returns the matched slug. Best-effort: empty candidates / embedder
     /// failure / parse error / no confirmed match all yield None.
-    let shortlistAndConfirm
+    let private shortlistAndConfirm
         (chat: IChatClient) (embedder: IEmbedder) (queryText: string)
         (candidates: (string * string * string) list)
         (floor: float) (topK: int) (systemPrompt: string)
