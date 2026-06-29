@@ -174,6 +174,13 @@ module Adapters =
                     let stderrTask = proc.StandardError.ReadToEndAsync()
                     if not (proc.WaitForExit(timeoutSeconds * 1000)) then
                         (try proc.Kill(true) with _ -> ())
+                        // Killing closes the pipes, so the async readers finish promptly;
+                        // wait on them (bounded) so a kill-induced fault is observed rather
+                        // than surfacing later as an UnobservedTaskException.
+                        (try System.Threading.Tasks.Task.WaitAll(
+                                [| stdoutTask :> System.Threading.Tasks.Task
+                                   stderrTask :> System.Threading.Tasks.Task |], 5000) |> ignore
+                         with _ -> ())
                         failwithf "whisper timed out after %d s" timeoutSeconds
                     stdoutTask.Result |> ignore
                     let stderr = stderrTask.Result
