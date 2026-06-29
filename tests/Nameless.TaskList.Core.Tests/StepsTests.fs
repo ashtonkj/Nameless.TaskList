@@ -126,6 +126,8 @@ let ``Steps.matchNote returns None when the model declines`` () =
 let ``Steps.matchTask returns None with no candidates`` () =
     let vault = FakeVault()
     let embedder = FakeEmbedder(fun _ -> [| 1.0 |])
+    // Empty response list is intentional: with no candidate tasks the shortlist is empty, so
+    // matchTask short-circuits to None and never reaches the LLM confirm call.
     let chat = FakeChatClient([])
     Assert.Equal(None, Steps.matchTask (chat :> IChatClient) (embedder :> IEmbedder) (vault :> IVault) "anything" 0.5 5)
 

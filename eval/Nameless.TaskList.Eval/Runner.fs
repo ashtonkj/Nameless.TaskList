@@ -20,6 +20,8 @@ module Runner =
 
     /// Normalise a case referenceDate (a bare date or datetime) to a SAST (+02:00) noon ISO
     /// timestamp string, the form the create prompts and the event date-inference expect.
+    /// The +02:00 is fixed deliberately: the gold dataset's expected dates are themselves SAST
+    /// (e.g. the event-create fixtures), so this is not a missed configurability.
     let private isoRef (s: string) : string =
         match System.DateTimeOffset.TryParse s with
         | true, dto -> System.DateTimeOffset(dto.Year, dto.Month, dto.Day, 12, 0, 0, System.TimeSpan.FromHours 2.0).ToString("yyyy-MM-ddTHH:mm:sszzz")

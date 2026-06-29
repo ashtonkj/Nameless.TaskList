@@ -209,6 +209,9 @@ module Pipeline =
         | None -> NotFound
         | Some msg ->
             let isoTimestamp (ts: System.DateTime) = Time.iso deps.UtcOffset ts
+            /// Pick the later of an existing ISO timestamp and a new one (returned as ISO). Keeps a
+            /// topic's LastUpdated moving only forward, so out-of-order / bulk reprocessing never
+            /// rewinds it; falls back to the new timestamp when either string fails to parse.
             let laterIso (existing: string) (ts: System.DateTime) : string =
                 let nu = isoTimestamp ts
                 match System.DateTimeOffset.TryParse existing, System.DateTimeOffset.TryParse nu with
