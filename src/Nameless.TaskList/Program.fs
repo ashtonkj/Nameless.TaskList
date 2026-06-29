@@ -41,8 +41,10 @@ module Program =
             let http = sp.GetRequiredService<HttpClient>()
             let embedModel = if isNull cfg.["Ollama:EmbedModel"] then "nomic-embed-text" else cfg.["Ollama:EmbedModel"]
             let inner = OllamaEmbedder(http, cfg.["Ollama:Url"], embedModel) :> IEmbedder
-            // Disabled (explicit "false") -> bare embedder, today's behaviour.
-            if cfg.["EmbeddingCache:Enabled"] = "false" then inner
+            // Enabled unless explicitly false (accepts the JSON boolean and the env-var string;
+            // .NET stringifies a JSON `false` to "False", so a case-sensitive "false" check would miss it).
+            let cacheEnabled = match System.Boolean.TryParse(cfg.["EmbeddingCache:Enabled"]) with | true, v -> v | _ -> true
+            if not cacheEnabled then inner
             else
                 let maxEntries = match System.Int32.TryParse(cfg.["EmbeddingCache:MaxEntries"]) with | true, v when v > 0 -> v | _ -> 2000
                 let saveEveryN = match System.Int32.TryParse(cfg.["EmbeddingCache:SaveEveryN"]) with | true, v when v > 0 -> v | _ -> 50

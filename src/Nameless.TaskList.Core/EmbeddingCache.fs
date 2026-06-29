@@ -21,6 +21,7 @@ type LruCache(capacity: int) =
 
     member _.Count = lock sync (fun () -> index.Count)
 
+    /// Returns the cached vector by reference (no copy) — callers must treat it as immutable.
     member _.TryGet(key: string) : float[] option =
         lock sync (fun () ->
             match index.TryGetValue key with
