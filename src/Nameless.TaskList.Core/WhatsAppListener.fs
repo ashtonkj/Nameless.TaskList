@@ -17,18 +17,16 @@ module WhatsAppListener =
                 match root.TryGetProperty(name, &v) with
                 | true when v.ValueKind = JsonValueKind.String -> Some (v.GetString())
                 | _ -> None
-            let id = str "id"
-            let jid = str "chat_jid"
-            if Option.isNone id || Option.isNone jid ||
-               String.IsNullOrWhiteSpace (Option.defaultValue "" id) ||
-               String.IsNullOrWhiteSpace (Option.defaultValue "" jid) then
+            let id = str "id" |> Option.defaultValue ""
+            let jid = str "chat_jid" |> Option.defaultValue ""
+            if String.IsNullOrWhiteSpace id || String.IsNullOrWhiteSpace jid then
                 None
             else
                 let ts =
                     match DateTimeOffset.TryParse(Option.defaultValue "" (str "timestamp")) with
                     | true, d -> d
                     | _ -> DateTimeOffset.MinValue
-                Some { Id = Option.defaultValue "" id; ChatJid = Option.defaultValue "" jid; Timestamp = ts }
+                Some { Id = id; ChatJid = jid; Timestamp = ts }
         with _ -> None
 
     /// Drain every message since the cursor (all chats, ascending — GetMessagesSince already
