@@ -20,15 +20,24 @@ module Email =
         if String.IsNullOrWhiteSpace text then ""
         else
             let lines = text.Replace("\r\n", "\n").Split('\n')
-            // Cut at the first "On ... wrote:" attribution line (start of a reply chain).
-            let attribution = Regex(@"^On .+ wrote:\s*$", RegexOptions.IgnoreCase)
+            // An attribution opens on a line starting "On" and is confirmed when a line within the
+            // next two lines ends with "wrote:" — so a multi-line (wrapped) "On … wrote:" attribution
+            // is cut, not just a single-line one. The end-anchored "wrote:" guards against a
+            // mid-sentence "I wrote the notes." false cut.
+            let opensAttribution = Regex(@"^On\b", RegexOptions.IgnoreCase)
+            let endsWrote = Regex(@"wrote:\s*$", RegexOptions.IgnoreCase)
+            let isAttribution (i: int) =
+                opensAttribution.IsMatch lines.[i]
+                && (let last = min (i + 2) (lines.Length - 1)
+                    seq { i .. last } |> Seq.exists (fun j -> endsWrote.IsMatch lines.[j]))
             // Cut at a signature delimiter line ("-- ").
             let isSig (l: string) = l.TrimEnd() = "--" || l = "-- "
             let kept = ResizeArray<string>()
             let mutable stop = false
-            for l in lines do
+            for i in 0 .. lines.Length - 1 do
                 if not stop then
-                    if attribution.IsMatch l || isSig l then stop <- true
+                    let l = lines.[i]
+                    if isAttribution i || isSig l then stop <- true
                     elif (l.TrimStart().StartsWith ">") then ()   // drop quoted lines
                     else kept.Add l
             String.Join("\n", kept).Trim()
