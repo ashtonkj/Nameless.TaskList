@@ -401,8 +401,7 @@ let ``the cache is persisted after SaveEveryN misses`` () =
 
 [<Fact>]
 let ``a persisted cache for the same model is loaded and serves hits`` () =
-    let preset = { Model = "m"; Entries = [| { Key = ""; Vector = [||] } |] }   // replaced below
-    // Build a real key by embedding once through a throwaway decorator, then reuse via load.
+    // Warm a decorator so the store captures a real (hashed) key for "shared", then reload it.
     let mutable calls = 0
     let inner = FakeEmbedder(fun _ -> calls <- calls + 1; [| 7.0 |]) :> IEmbedder
     let store1 = FakeCacheStore(empty)
@@ -413,7 +412,6 @@ let ``a persisted cache for the same model is loaded and serves hits`` () =
     let cold = CachingEmbedder(inner, LruCache(10), FakeCacheStore(saved), "m", 1000) :> IEmbedder
     cold.Embed "shared" |> ignore
     Assert.Equal(1, calls)
-    ignore preset
 
 [<Fact>]
 let ``a persisted cache for a different model is discarded`` () =
