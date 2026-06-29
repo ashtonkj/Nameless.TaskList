@@ -25,6 +25,12 @@ type private FakeVault() =
         member _.ListFilesRecursive(relDir) =
             let prefix = relDir.TrimEnd('/') + "/"
             files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
+        member _.Relocate(src, dst) =
+            match files.TryGetValue src with
+            | true, content when not (files.ContainsKey dst) ->
+                files.Remove src |> ignore
+                files.[dst] <- content
+            | _ -> ()
 
 // Verifies the result-to-HTTP mapping (spec §8.2) without a live host.
 // ASP.NET 10's IResult.ExecuteAsync requires RequestServices with logging + routing.

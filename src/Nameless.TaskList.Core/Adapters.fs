@@ -43,6 +43,14 @@ module Adapters =
                     |> Array.map (fun p -> Path.GetRelativePath(root, p).Replace('\\', '/'))
                     |> List.ofArray
                 else []
+            member _.Relocate(src, dst) =
+                let s = full src
+                let d = full dst
+                // Guards keep the contract (no overwrite, no throw on a missing source). A genuine
+                // IO failure propagates, exactly like Write.
+                if File.Exists s && not (File.Exists d) then
+                    Directory.CreateDirectory(Path.GetDirectoryName(d)) |> ignore
+                    File.Move(s, d)
 
     // ---- Bulk-job store over a single JSON file on the local filesystem ----
     type FileSystemJobStore(path: string) =

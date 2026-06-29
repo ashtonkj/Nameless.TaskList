@@ -18,6 +18,12 @@ type FakeVault() =
         member _.ListFilesRecursive(relDir) =
             let prefix = relDir.TrimEnd('/') + "/"
             files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
+        member _.Relocate(src, dst) =
+            match files.TryGetValue src with
+            | true, content when not (files.ContainsKey dst) ->
+                files.Remove src |> ignore
+                files.[dst] <- content
+            | _ -> ()   // src missing or dst exists -> no-op
 
 /// Returns scripted responses in order. Records how many times Chat was called
 /// and the message array passed to each call (for asserting on prompt payloads).

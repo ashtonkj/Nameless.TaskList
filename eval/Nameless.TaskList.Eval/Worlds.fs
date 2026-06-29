@@ -19,6 +19,12 @@ module Worlds =
             member _.ListFilesRecursive(relDir) =
                 let prefix = relDir.TrimEnd('/') + "/"
                 files.Keys |> Seq.filter (fun k -> k.StartsWith(prefix)) |> List.ofSeq
+            member _.Relocate(src, dst) =
+                match files.TryGetValue src with
+                | true, content when not (files.ContainsKey dst) ->
+                    files.Remove src |> ignore
+                    files.[dst] <- content
+                | _ -> ()
 
     /// Read every *.md under `worldDir` into (vault-relative path, content). The vault-relative
     /// path is the path under the world root with '\' normalised to '/'.
