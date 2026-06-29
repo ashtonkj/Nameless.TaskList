@@ -142,3 +142,12 @@ let ``scoreRelationships directed relation respects from-to`` () =
     Assert.Equal(0.0, (Scoring.scoreRelationships c (Ok swapped)).Score, 3)   // direction matters
     let right : RelationshipExtraction = { Relationships = [| relEdge "sarah-ashford" "ethan-ashford" "parent-child" |] }
     Assert.Equal(1.0, (Scoring.scoreRelationships c (Ok right)).Score, 3)
+
+[<Fact>]
+let ``scoreScalar ignores a non-scalar expected value`` () =
+    // A mis-typed gold fixture: "status" is an array under a scalar key. It must NOT be scored
+    // (no "status" field in the result), while a genuine scalar ("priority") still scores.
+    let case = genCase "task-create" """{"frontmatter":{"status":["pending"],"priority":"medium"}}"""
+    let r = Scoring.scoreTask case (Ok (taskOutcome "pending" "medium" "" "Do it" ""))
+    Assert.False(r.Fields |> List.exists (fun f -> f.Field = "status"))
+    Assert.True(r.Fields |> List.exists (fun f -> f.Field = "priority"))

@@ -134,7 +134,10 @@ module Scoring =
     /// Score one scalar frontmatter field (exact, normalised) when the case asserts it.
     let private scoreScalar (fm: JsonElement) (key: string) (actual: string) (fields: ResizeArray<FieldScore>) =
         match fm.TryGetProperty key with
-        | true, v ->
+        | true, v when (v.ValueKind = JsonValueKind.String
+                        || v.ValueKind = JsonValueKind.True
+                        || v.ValueKind = JsonValueKind.False
+                        || v.ValueKind = JsonValueKind.Number) ->
             let exp = jsonScalar v
             let s = if norm exp = norm actual then 1.0 else 0.0
             fields.Add { Field = key; Score = s; Detail = sprintf "exp=%s act=%s" exp actual }

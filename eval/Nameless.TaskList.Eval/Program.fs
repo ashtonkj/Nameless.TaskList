@@ -41,16 +41,24 @@ let main argv =
                 2
             | Ok rs ->
                 let scorecard = Report.aggregate model rs
-                let baseline = opts.Baseline |> Option.map (fun p -> Report.fromJson (File.ReadAllText p))
-                let md = Report.toMarkdown scorecard rs baseline
-                printfn "%s" md
-                match opts.Report with
-                | Some path ->
-                    File.WriteAllText(path, md)
-                    File.WriteAllText(Path.ChangeExtension(path, ".json"), Report.toJson scorecard)
-                | None -> ()
-                if scorecard.Overall < opts.Threshold then
-                    eprintfn "FAIL: overall %.3f < threshold %.3f" scorecard.Overall opts.Threshold
-                    1
-                else
-                    0
+                let baselineResult =
+                    match opts.Baseline with
+                    | None -> Ok None
+                    | Some p -> try Ok (Some (Report.fromJson (File.ReadAllText p))) with ex -> Error ex.Message
+                match baselineResult with
+                | Error e ->
+                    eprintfn "could not read --baseline '%s': %s" (Option.defaultValue "" opts.Baseline) e
+                    2
+                | Ok baseline ->
+                    let md = Report.toMarkdown scorecard rs baseline
+                    printfn "%s" md
+                    match opts.Report with
+                    | Some path ->
+                        File.WriteAllText(path, md)
+                        File.WriteAllText(Path.ChangeExtension(path, ".json"), Report.toJson scorecard)
+                    | None -> ()
+                    if scorecard.Overall < opts.Threshold then
+                        eprintfn "FAIL: overall %.3f < threshold %.3f" scorecard.Overall opts.Threshold
+                        1
+                    else
+                        0
