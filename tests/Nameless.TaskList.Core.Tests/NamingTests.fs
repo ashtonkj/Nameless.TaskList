@@ -98,3 +98,18 @@ let ``messagePathFor email differs for different message ids in the same second`
     Assert.NotEqual<string>(
         Naming.messagePathFor "email" "c" ts "<id-1@mail>",
         Naming.messagePathFor "email" "c" ts "<id-2@mail>")
+
+[<Fact>]
+let ``trashPath mirrors a nested path under .trash with a timestamp before the extension`` () =
+    let ts = System.DateTime(2026, 6, 29, 14, 55, 1)
+    Assert.Equal(".trash/people/family/jane-20260629T145501.md", Naming.trashPath ts "people/family/jane.md")
+
+[<Fact>]
+let ``trashPath handles a root-level file`` () =
+    let ts = System.DateTime(2026, 6, 29, 14, 55, 1)
+    Assert.Equal(".trash/x-20260629T145501.md", Naming.trashPath ts "x.md")
+
+[<Fact>]
+let ``trashPath handles a name with no extension`` () =
+    let ts = System.DateTime(2026, 6, 29, 14, 55, 1)
+    Assert.Equal(".trash/people/a-20260629T145501", Naming.trashPath ts "people/a")
