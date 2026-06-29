@@ -57,7 +57,7 @@ let ``classifyUser with history wraps content with markers`` () =
 let ``topicUpdateUser with empty history omits the Recent conversation heading`` () =
     let result = Prompts.topicUpdateUser "" "BODY" "MSG" "INTENT"
     Assert.DoesNotContain("Recent conversation", result)
-    Assert.Equal("Current topic body:\nBODY\n\nNew message raw text:\nMSG\n\nExtracted intent:\nINTENT", result)
+    Assert.Equal("Current topic body:\nBODY\n\nNew message content:\nMSG\n\nExtracted intent:\nINTENT", result)
 
 [<Fact>]
 let ``topicUpdateUser with history includes the conversation section`` () =

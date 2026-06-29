@@ -262,7 +262,7 @@ headings. Preserve existing facts; correct them only if the new information supe
 Respond ONLY with the updated markdown body (no frontmatter, no explanation)."""
 
     let noteUpdateUser (existingBody: string) (intent: string) (raw: string) : string =
-        sprintf "Current note body:\n%s\n\nNew fact (intent):\n%s\n\nSource message raw text:\n%s"
+        sprintf "Current note body:\n%s\n\nNew fact (intent):\n%s\n\nSource message content:\n%s"
             existingBody intent raw
 
     let taskMatchSystem = """You are a knowledge base assistant. Decide whether a new task intent is the
@@ -299,7 +299,7 @@ Produce the updated task as a COMPLETE markdown file (YAML frontmatter between -
 Respond ONLY with the complete markdown file. No explanation."""
 
     let taskUpdateUser (existingFile: string) (intent: string) (raw: string) : string =
-        sprintf "Current task file:\n%s\n\nNew mention (intent):\n%s\n\nSource message raw text:\n%s"
+        sprintf "Current task file:\n%s\n\nNew mention (intent):\n%s\n\nSource message content:\n%s"
             existingFile intent raw
 
     let personMatchSystem = """You are a knowledge base assistant. Decide whether a newly mentioned person
@@ -483,10 +483,10 @@ updated markdown body (no frontmatter, no other explanation)."""
     /// identical to the pre-history-feature format, so no-history processing is unchanged.
     let topicUpdateUser (history: string) (existingBody: string) (content: string) (intent: string) : string =
         if System.String.IsNullOrWhiteSpace history then
-            sprintf "Current topic body:\n%s\n\nNew message raw text:\n%s\n\nExtracted intent:\n%s"
+            sprintf "Current topic body:\n%s\n\nNew message content:\n%s\n\nExtracted intent:\n%s"
                 existingBody content intent
         else
-            sprintf "Current topic body:\n%s\n\nRecent conversation (oldest to newest, for context):\n%s\n\nNew message raw text:\n%s\n\nExtracted intent:\n%s"
+            sprintf "Current topic body:\n%s\n\nRecent conversation (oldest to newest, for context):\n%s\n\nNew message content:\n%s\n\nExtracted intent:\n%s"
                 existingBody history content intent
 
     let dailyBriefingSystem = """You are generating a daily briefing for a personal knowledge base.
