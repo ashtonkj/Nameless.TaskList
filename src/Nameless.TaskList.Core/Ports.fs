@@ -65,3 +65,8 @@ type IListenCursorStore =
 type ISchedulerStateStore =
     abstract member Load : unit -> SchedulerState
     abstract member Save : state: SchedulerState -> unit
+
+/// Persists the embedding cache (content-keyed vectors) across restarts.
+type IEmbeddingCacheStore =
+    abstract member Load : unit -> EmbeddingCacheState
+    abstract member Save : state: EmbeddingCacheState -> unit

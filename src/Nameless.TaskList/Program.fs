@@ -40,7 +40,21 @@ module Program =
         builder.Services.AddSingleton<IEmbedder>(fun sp ->
             let http = sp.GetRequiredService<HttpClient>()
             let embedModel = if isNull cfg.["Ollama:EmbedModel"] then "nomic-embed-text" else cfg.["Ollama:EmbedModel"]
-            OllamaEmbedder(http, cfg.["Ollama:Url"], embedModel) :> IEmbedder) |> ignore
+            let inner = OllamaEmbedder(http, cfg.["Ollama:Url"], embedModel) :> IEmbedder
+            // Enabled unless explicitly false (accepts the JSON boolean and the env-var string;
+            // .NET stringifies a JSON `false` to "False", so a case-sensitive "false" check would miss it).
+            let cacheEnabled = match System.Boolean.TryParse(cfg.["EmbeddingCache:Enabled"]) with | true, v -> v | _ -> true
+            if not cacheEnabled then inner
+            else
+                let maxEntries = match System.Int32.TryParse(cfg.["EmbeddingCache:MaxEntries"]) with | true, v when v > 0 -> v | _ -> 2000
+                let saveEveryN = match System.Int32.TryParse(cfg.["EmbeddingCache:SaveEveryN"]) with | true, v when v > 0 -> v | _ -> 50
+                let statePath =
+                    let configured = cfg.["EmbeddingCache:StatePath"]
+                    if System.String.IsNullOrWhiteSpace configured
+                    then System.IO.Path.Combine(cfg.["Vault:Root"], ".taskmeister", "embedding-cache.json")
+                    else configured
+                let store = FileSystemEmbeddingCacheStore(statePath) :> IEmbeddingCacheStore
+                CachingEmbedder(inner, LruCache(maxEntries), store, embedModel, saveEveryN) :> IEmbedder) |> ignore
         builder.Services.AddSingleton<IVision>(fun sp ->
             let http = sp.GetRequiredService<HttpClient>()
             let visionModel = if isNull cfg.["Ollama:VisionModel"] then "gemma3:latest" else cfg.["Ollama:VisionModel"]
@@ -154,6 +168,13 @@ module Program =
                 new SchedulerService(tasks, stateStore, runTask, checkSeconds, logger)) |> ignore
 
         let app = builder.Build()
+
+        // Persist the embedding cache on graceful shutdown (best-effort).
+        match app.Services.GetRequiredService<IEmbedder>() with
+        | :? CachingEmbedder as ce ->
+            let lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>()
+            lifetime.ApplicationStopping.Register(fun () -> ce.Flush()) |> ignore
+        | _ -> ()
 
         app.MapPost("/messages/process", System.Func<ProcessMessageRequest, IMessageSource, IVault, IChatClient, IEmbedder, IVision, ITranscriber, Microsoft.AspNetCore.Http.IResult>(
             fun (req: ProcessMessageRequest) (messages: IMessageSource) (vault: IVault) (chat: IChatClient) (embedder: IEmbedder) (vision: IVision) (transcriber: ITranscriber) ->
