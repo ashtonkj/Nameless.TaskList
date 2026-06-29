@@ -300,3 +300,16 @@ module Naming =
     let digestPath (day: System.DateTime) (kind: string) : string =
         sprintf "digests/%04d-%02d-%02d-%s.md" day.Year day.Month day.Day kind
 
+    /// Destination for a retired file: mirror its path under a top-level .trash/ directory,
+    /// inserting a timestamp before the extension so repeated retires never collide. Pure —
+    /// the timestamp is supplied by the caller (callers pass the configured-offset wall clock).
+    let trashPath (ts: System.DateTime) (relPath: string) : string =
+        let p = (if isNull relPath then "" else relPath).Replace('\\', '/')
+        let dir = System.IO.Path.GetDirectoryName(p)
+        let name = System.IO.Path.GetFileNameWithoutExtension(p)
+        let ext = System.IO.Path.GetExtension(p)
+        let stamp = ts.ToString("yyyyMMddTHHmmss")
+        let dirPart =
+            if System.String.IsNullOrEmpty dir then "" else dir.Replace('\\', '/') + "/"
+        sprintf ".trash/%s%s-%s%s" dirPart name stamp ext
+

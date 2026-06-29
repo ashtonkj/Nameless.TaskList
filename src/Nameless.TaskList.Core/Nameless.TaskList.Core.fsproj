@@ -10,6 +10,7 @@
         <Compile Include="KnowledgeBase.fs" />
         <Compile Include="Conversation.fs" />
         <Compile Include="Ports.fs" />
+        <Compile Include="VaultOps.fs" />
         <Compile Include="Tools.fs" />
         <Compile Include="Agent.fs" />
         <Compile Include="Prompts.fs" />
