@@ -47,6 +47,16 @@ type FakeSince(sinceList: ChatMessage list) =
             sinceList
         member _.GetMediaBytes(_id, _jid) = None
 
+// IMessageSource fake whose GetMessagesSince honours the cursor like the real
+// SQL (`m.timestamp >= @Since`), so it can exercise the inclusive boundary.
+type private FilteringSince(msgs: ChatMessage list) =
+    interface IMessageSource with
+        member _.GetMessage(_id, _jid) = None
+        member _.GetRecent(_jid, _before, _ex) = []
+        member _.GetMessagesSince(_chatJid, since) =
+            msgs |> List.filter (fun m -> m.Timestamp >= since)
+        member _.GetMediaBytes(_id, _jid) = None
+
 let private msg id (ts: DateTime) : ChatMessage =
     { Id = id; ChatJid = "c@s"; ChatName = "C"; NormalizedChatName = "C"; IsGroup = false
       SenderId = "c"; SenderName = "C"; SenderPushName = null; SenderSavedName = null
@@ -72,6 +82,21 @@ let ``catchUp on no new messages leaves the cursor unchanged`` () =
     let next = WhatsAppListener.catchUp mb (fun id _ -> seen.Add id) { Since = t }
     Assert.Empty(seen)
     Assert.Equal(t, next.Since)
+
+[<Fact>]
+let ``catchUp re-fetches the boundary message at the cursor (inclusive >=)`` () =
+    let t1 = DateTime(2026, 6, 18, 10, 0, 0)
+    let t2 = DateTime(2026, 6, 18, 11, 0, 0)
+    let mb = FilteringSince([ msg "<a>" t1; msg "<b>" t2 ])
+    // First drain from the beginning: both processed, cursor advances to t2.
+    let first = WhatsAppListener.catchUp mb (fun _ _ -> ()) { Since = DateTime.MinValue }
+    Assert.Equal(t2, first.Since)
+    // Second drain from the advanced cursor: the message exactly AT t2 is re-fetched
+    // (SQL filter is `timestamp >= since`); idempotency, not the cursor, dedups it.
+    let seen = ResizeArray<string>()
+    let second = WhatsAppListener.catchUp mb (fun id _ -> seen.Add id) first
+    Assert.Equal<string list>([ "<b>" ], List.ofSeq seen)
+    Assert.Equal(t2, second.Since)
 
 open System.Threading
 
