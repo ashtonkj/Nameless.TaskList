@@ -116,3 +116,11 @@ let ``FakeVault Relocate moves a file, vacating the source`` () =
     (vault :> IVault).Relocate("people/family/jane.md", ".trash/people/family/jane-x.md")
     Assert.False((vault :> IVault).Exists("people/family/jane.md"))
     Assert.Equal("body", (vault :> IVault).Read(".trash/people/family/jane-x.md"))
+
+[<Fact>]
+let ``Vault.retire moves the file under .trash, vacating the original`` () =
+    let vault = Nameless.TaskList.Core.Tests.Fakes.FakeVault()
+    vault.Seed("people/family/jane.md", "body")
+    Nameless.TaskList.Core.Vault.retire (vault :> IVault) (System.DateTime(2026, 6, 29, 14, 55, 1)) "people/family/jane.md"
+    Assert.False((vault :> IVault).Exists("people/family/jane.md"))
+    Assert.True((vault :> IVault).Exists(".trash/people/family/jane-20260629T145501.md"))
