@@ -31,6 +31,7 @@
         <Compile Include="BulkProcessorTests.fs" />
         <Compile Include="JobStoreTests.fs" />
         <Compile Include="EmbeddingCacheTests.fs" />
+        <Compile Include="CachingEmbedderTests.fs" />
         <Compile Include="EvalWorldsTests.fs" />
         <Compile Include="EvalDatasetTests.fs" />
         <Compile Include="EvalScoringTests.fs" />

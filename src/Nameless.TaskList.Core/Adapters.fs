@@ -375,6 +375,54 @@ module Adapters =
                     else { Model = ""; Entries = [||] }
                 with _ -> { Model = ""; Entries = [||] }
 
+    // ---- Caching decorator over any IEmbedder. Content-keyed by SHA-256 of (model + text) so a
+    //      change of embed model can't serve stale vectors; LRU-bounded; persisted best-effort. ----
+    type CachingEmbedder(inner: IEmbedder, cache: LruCache, store: IEmbeddingCacheStore, model: string, saveEveryN: int) =
+        let sync = obj ()
+        let n = max 1 saveEveryN
+        let mutable dirty = 0
+
+        let keyFor (text: string) =
+            use sha = System.Security.Cryptography.SHA256.Create()
+            let bytes = System.Text.Encoding.UTF8.GetBytes(model + "\n" + text)
+            sha.ComputeHash bytes |> Array.map (fun b -> b.ToString("x2")) |> String.concat ""
+
+        let flush () =
+            try
+                let entries =
+                    cache.Snapshot()
+                    |> List.map (fun (k, v) -> { Key = k; Vector = v })
+                    |> List.toArray
+                store.Save { Model = model; Entries = entries }
+            with _ -> ()
+
+        do
+            // Load the persisted cache; discard it if produced by a different embed model.
+            try
+                let st = store.Load()
+                if not (obj.ReferenceEquals(st, null)) && st.Model = model
+                   && not (obj.ReferenceEquals(st.Entries, null)) then
+                    cache.Seed [ for e in st.Entries -> (e.Key, e.Vector) ]
+            with _ -> ()
+
+        /// Persist the current cache (best-effort). Wired to ApplicationStopping in the host.
+        member _.Flush() = lock sync flush
+
+        interface IEmbedder with
+            member _.Embed(text) =
+                let key = keyFor text
+                match cache.TryGet key with
+                | Some v -> v
+                | None ->
+                    let v = inner.Embed text
+                    cache.Set(key, v)
+                    let shouldFlush =
+                        lock sync (fun () ->
+                            dirty <- dirty + 1
+                            if dirty >= n then dirty <- 0; true else false)
+                    if shouldFlush then lock sync flush
+                    v
+
     // ---- IMAP mailbox over MailKit. Synchronous by design, like the other adapters. ----
     type MailKitMailbox(host: string, port: int, useSsl: bool, user: string, password: string) =
         let connect () =
