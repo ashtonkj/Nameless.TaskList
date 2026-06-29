@@ -37,6 +37,23 @@ let ``extractText drops a signature block`` () =
     Assert.DoesNotContain("Paediatrician", out)
 
 [<Fact>]
+let ``extractText drops a multi-line On … wrote: attribution`` () =
+    let body = "My answer is yes.\n\nOn Mon, 14 Jun 2026 at 09:00, Dr Naidoo\n<naidoo@example.com> wrote:\n> original question"
+    let r = { raw () with TextBody = body }
+    let out = Email.extractText r
+    Assert.Contains("My answer is yes.", out)
+    Assert.DoesNotContain("original question", out)
+    Assert.DoesNotContain("naidoo@example.com", out)   // the wrapped attribution line is gone too
+
+[<Fact>]
+let ``extractText does not cut a body line that merely starts with On`` () =
+    // No line ends with "wrote:", so nothing is an attribution — both lines stay.
+    let r = { raw () with TextBody = "On Friday we met; I wrote the notes.\nLet's confirm Tuesday." }
+    let out = Email.extractText r
+    Assert.Contains("On Friday we met", out)
+    Assert.Contains("confirm Tuesday", out)
+
+[<Fact>]
 let ``isBulk is true when list-unsubscribe is present`` () =
     Assert.True(Email.isBulk { raw () with ListUnsubscribe = true })
 
