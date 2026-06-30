@@ -202,6 +202,12 @@ Rules:
 
 Respond ONLY with a complete markdown file (frontmatter between --- fences, then body). No explanation."""
 
+    let personContextSystem = """You are filing a person into one life-context for a personal knowledge base.
+Given a person's name, role, and aliases, reply with EXACTLY ONE of these context labels and nothing else:
+family, medical, school, finance, professional.
+Guidance: medical = doctors, nurses, dentists, therapists, medical-aid contacts; school = teachers, tutors, principals, coaches, classmates and their parents; finance = accountants, bankers, financial advisers, insurers; professional = colleagues, managers, clients, business contacts; family = relatives and personal or household contacts.
+Reply with the single lowercase label only — no punctuation, no explanation."""
+
     let relationshipExtractSystem = """You identify explicit relationships between people for a personal knowledge base.
 
 You are given the slugs of people already known to the knowledge base and the message that mentioned them.

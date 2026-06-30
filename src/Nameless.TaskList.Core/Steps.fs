@@ -388,6 +388,22 @@ module Steps =
                   Channel = ""; Phone = ""; Email = ""; Tags = [||]; Aliases = [||] }
               Body = sprintf "%s\n\n⚠ Stub — details to be completed." input.Intent }
 
+    /// Classify a person into one of `knownContexts` from their role (LLM, tool-free). Returns the
+    /// chosen context, or None when the model replies off-list. Best-effort; never throws.
+    let classifyPersonContext (chat: IChatClient) (name: string) (role: string) (aliases: string array) : string option =
+        let aliasText = if isNull aliases then "" else String.concat ", " (Array.toList aliases)
+        let user =
+            sprintf "Name: %s\nRole: %s\nAliases: %s"
+                (if isNull name then "" else name) (if isNull role then "" else role) aliasText
+        let reply = Agent.runConversation chat [] Prompts.personContextSystem user
+        // Keep only letters so trailing punctuation / casing ("Medical.") still matches.
+        let letters =
+            (if isNull reply then "" else reply)
+            |> Seq.filter System.Char.IsLetter
+            |> Seq.toArray
+        let cleaned = System.String(letters).ToLowerInvariant()
+        if List.contains cleaned knownContexts then Some cleaned else None
+
     /// Run the relationship-extraction prompt over the resolved co-mentioned slugs + the message,
     /// returning the parsed edges. Mirrors the former Pipeline call; the pipeline still does
     /// buildEdge/confidence-filter/reconcile/write.

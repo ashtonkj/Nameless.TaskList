@@ -181,3 +181,18 @@ let ``Steps.extractRelationships parses edges`` () =
         Assert.Equal(1, ex.Relationships.Length)
         Assert.Equal("parent-child", ex.Relationships.[0].Relation)
     | Error e -> failwithf "expected Ok, got Error %s" e
+
+[<Fact>]
+let ``classifyPersonContext returns the on-list context`` () =
+    let chat = FakeChatClient([ Responses.final "medical" ])
+    Assert.Equal(Some "medical", Steps.classifyPersonContext chat "Dr Naidoo" "doctor" [| "naidoo" |])
+
+[<Fact>]
+let ``classifyPersonContext tolerates surrounding punctuation and case`` () =
+    let chat = FakeChatClient([ Responses.final "Medical." ])
+    Assert.Equal(Some "medical", Steps.classifyPersonContext chat "Dr Naidoo" "doctor" [||])
+
+[<Fact>]
+let ``classifyPersonContext returns None for an off-list reply`` () =
+    let chat = FakeChatClient([ Responses.final "spiritual" ])
+    Assert.Equal(None, Steps.classifyPersonContext chat "Guru" "advisor" [||])
