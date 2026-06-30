@@ -230,3 +230,8 @@ let ``relationships endpoints return 200`` () =
     Assert.Equal(200, statusOfResult (RelationshipsHandler.allToHttp (v :> IVault)))
     Assert.Equal(200, statusOfResult (RelationshipsHandler.forPersonToHttp (v :> IVault) "ethan"))
     Assert.Equal(200, statusOfResult (RelationshipsHandler.forPersonToHttp (v :> IVault) "nobody"))
+
+[<Fact>]
+let ``refile summary maps to 200`` () =
+    let s : Nameless.TaskList.Core.Refiler.RefileSummary = { Scanned = 3; Refiled = 1; Skipped = 1 }
+    Assert.Equal(200, statusOfResult (RefileHandler.toHttp s))

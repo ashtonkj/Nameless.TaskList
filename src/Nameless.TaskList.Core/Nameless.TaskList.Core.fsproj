@@ -22,6 +22,7 @@
         <Compile Include="Email.fs" />
         <Compile Include="BulkProcessor.fs" />
         <Compile Include="Indexer.fs" />
+        <Compile Include="Refiler.fs" />
         <Compile Include="EmbeddingCache.fs" />
         <Compile Include="Adapters.fs" />
         <Compile Include="Weights.fs" />

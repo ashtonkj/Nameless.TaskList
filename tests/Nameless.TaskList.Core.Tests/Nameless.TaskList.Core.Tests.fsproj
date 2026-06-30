@@ -9,6 +9,7 @@
         <Compile Include="Fakes.fs" />
         <Compile Include="PromptsTests.fs" />
         <Compile Include="StepsTests.fs" />
+        <Compile Include="RefilerTests.fs" />
         <Compile Include="NamingTests.fs" />
         <Compile Include="CodecTests.fs" />
         <Compile Include="WireTests.fs" />

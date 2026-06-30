@@ -30,6 +30,10 @@ module MaintenanceTasks =
         Digest.generate { Vault = vault; Chat = chat; Model = cfg.["Ollama:Model"]
                           Today = (KnowledgeBase.Time.now off).DateTime; UtcOffset = off } p
 
+    let refilePeople (cfg: IConfiguration) (vault: IVault) (chat: IChatClient) : Refiler.RefileSummary =
+        ignore cfg
+        Refiler.run vault chat
+
 /// Runs due scheduled tasks on a timer. Registered only when Scheduler:Enabled = "true".
 /// `runTask` (built in Program.fs) dispatches by task name and swallows its own failures so one
 /// failing task never aborts the tick or the others.
