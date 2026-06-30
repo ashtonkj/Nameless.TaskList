@@ -29,6 +29,11 @@ module DigestHandler =
                           taskCount = r.TaskCount; eventCount = r.EventCount
                           commitmentCount = r.CommitmentCount; staleTopicCount = r.StaleTopicCount |})
 
+module RefileHandler =
+    /// Maps a re-file summary to a 200 response.
+    let toHttp (s: Nameless.TaskList.Core.Refiler.RefileSummary) : IResult =
+        Results.Ok(box {| scanned = s.Scanned; refiled = s.Refiled; skipped = s.Skipped |})
+
 [<CLIMutable>]
 type ProcessSinceRequest = { Since: string; ChatJid: string }
 

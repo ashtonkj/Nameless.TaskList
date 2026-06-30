@@ -145,7 +145,8 @@ module Program =
                 let tasks =
                     [ "daily-digest",  cfg.["Scheduler:DailyDigest"]
                       "weekly-digest", cfg.["Scheduler:WeeklyDigest"]
-                      "reindex",       cfg.["Scheduler:Reindex"] ]
+                      "reindex",       cfg.["Scheduler:Reindex"]
+                      "refile-people", cfg.["Scheduler:RefilePeople"] ]
                     |> List.choose (fun (name, s) ->
                         Scheduler.parseSpec s |> Option.map (fun spec -> ({ Name = name; Spec = spec } : Scheduler.ScheduledTask)))
                 let checkSeconds = match System.Int32.TryParse(cfg.["Scheduler:CheckIntervalSeconds"]) with | true, n -> n | _ -> 60
@@ -162,6 +163,7 @@ module Program =
                         | "daily-digest"  -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.daily |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
                         | "weekly-digest" -> MaintenanceTasks.digest cfg vault chat Digest.DigestParams.weekly |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
                         | "reindex"       -> MaintenanceTasks.reindex cfg vault |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
+                        | "refile-people" -> MaintenanceTasks.refilePeople cfg vault chat |> ignore; logger.LogInformation("ran scheduled task {Name}", t.Name)
                         | other           -> logger.LogWarning("unknown scheduled task {Name}", other)
                     with ex ->
                         logger.LogWarning(ex, "scheduled task {Name} failed", t.Name)
@@ -188,6 +190,11 @@ module Program =
         app.MapPost("/reindex", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
             fun (vault: IVault) ->
                 try MaintenanceTasks.reindex cfg vault |> ReindexHandler.toHttp
+                with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
+
+        app.MapPost("/people/refile", System.Func<IVault, IChatClient, Microsoft.AspNetCore.Http.IResult>(
+            fun (vault: IVault) (chat: IChatClient) ->
+                try MaintenanceTasks.refilePeople cfg vault chat |> RefileHandler.toHttp
                 with ex -> Results.Json({| error = ex.Message |}, statusCode = 500))) |> ignore
 
         app.MapGet("/relationships", System.Func<IVault, Microsoft.AspNetCore.Http.IResult>(
